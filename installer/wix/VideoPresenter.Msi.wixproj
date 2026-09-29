@@ -8,7 +8,7 @@
     或在仓库根目录执行：
         ./build/build.ps1 -Package Msi
 -->
-<Project Sdk="WixToolset.Sdk/4.0.4">
+<Project Sdk="WixToolset.Sdk/4.0.5">
 
     <PropertyGroup>
         <!-- ── 由 build.ps1 覆写；此处提供可直接编译的默认值 ── -->
@@ -28,10 +28,14 @@
         <DefineConstants>VpVersion=$(VpVersion);VpPublishDir=$(VpPublishDir);VpIconPath=$(VpIconPath)</DefineConstants>
     </PropertyGroup>
 
-    <ItemGroup>
-        <Compile Include="Product.wxs"/>
-        <!-- 由 build.ps1 扫描 dist/app 生成（见 build.ps1 的 MSI 阶段） -->
-        <Compile Include="GeneratedFiles.wxs" Condition="Exists('GeneratedFiles.wxs')"/>
-    </ItemGroup>
+    <!--
+        注意：这里【不能】再显式列一遍 .wxs 文件。
+
+        WixToolset.Sdk 会自动包含项目目录下的所有 .wxs（包括 build.ps1 生成的
+        GeneratedFiles.wxs）。显式重复声明会让 Product.wxs 被编译两次，
+        从而出现两个 entry section（两个 <Package>），报：
+            error WIX0089: Multiple entry sections '*' and '*' found.
+            error WIX0091: Duplicate symbol 'Property:ProductCode' ...
+    -->
 
 </Project>
