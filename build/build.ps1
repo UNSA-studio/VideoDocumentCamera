@@ -302,6 +302,23 @@ if ($doApp) {
         Write-Warning '  发布目录中没有启动器！桌面快捷方式将无法工作。请先执行 -Stage Launcher。'
     }
 
+    # ── 裁剪多语言资源 ──────────────────────────────────────────────────
+    #  self-contained 发布会把 Windows App SDK 的全部语言资源（.mui）带进来，
+    #  本应用界面只有中文与英文，其余语言目录可直接删除：
+    #  既显著缩小安装包，也减少 MSI 的组件数量。
+    $keepLangs = @('zh-Hans', 'zh-CN', 'zh-Hant', 'en', 'en-US', 'en-GB')
+    $langDirs = Get-ChildItem $appOutDir -Directory | Where-Object {
+        $_.Name -match '^[A-Za-z]{2}(-[A-Za-z]{2,4})*$' -and $keepLangs -notcontains $_.Name
+    }
+    if ($langDirs) {
+        $removed = 0
+        foreach ($d in $langDirs) {
+            Remove-Item $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            $removed++
+        }
+        Write-Host ("  已裁剪 {0} 个非中英语言资源目录" -f $removed)
+    }
+
     $files = Get-ChildItem $appOutDir -Recurse -File
     $sizeMb = [Math]::Round(($files | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
     Write-Host ''
@@ -351,12 +368,23 @@ if ($doMsi) {
     [void]$sb.AppendLine('  <Fragment>')
     [void]$sb.AppendLine('    <ComponentGroup Id="AppFilesGroup">')
 
+    # WiX 的 Guid="*" 会为「不同目录下的同名文件」算出相同 GUID，
+    # 例如各语言目录下的 Microsoft.UI.Xaml.Phone.dll.mui，
+    # 从而报 error WIX0369（组件 GUID 重复）。
+    # 因此这里基于【相对路径】自己算确定性 GUID：
+    #   · 稳定 —— 同一文件每次构建得到同一个 GUID（升级安装才能正常识别）
+    #   · 唯一 —— 相对路径不同则 GUID 不同
     $i = 0
     foreach ($f in $allFiles) {
         $i++
         $id = $i.ToString('D4')
+
+        $rel = $f.FullName.Substring($appOutDir.Length).TrimStart('\').Replace('\', '/').ToLowerInvariant()
+        $hash = [System.Security.Cryptography.MD5]::HashData([Text.Encoding]::UTF8.GetBytes('VideoPresenter/' + $rel))
+        $guid = (New-Object Guid -ArgumentList (,$hash)).ToString('B').ToUpper()
+
         $src = [System.Security.SecurityElement]::Escape($f.FullName)
-        [void]$sb.AppendLine(('      <Component Id="cmp{0}" Directory="INSTALLFOLDER" Guid="*">' -f $id))
+        [void]$sb.AppendLine(('      <Component Id="cmp{0}" Directory="INSTALLFOLDER" Guid="{1}">' -f $id, $guid))
         [void]$sb.AppendLine(('        <File Id="fil{0}" Source="{1}" KeyPath="yes" />' -f $id, $src))
         [void]$sb.AppendLine('      </Component>')
     }
