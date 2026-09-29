@@ -151,25 +151,34 @@ if ($doLauncher) {
     New-Item -ItemType Directory -Path $buildOut -Force | Out-Null
     $msbuildLog = Join-Path $buildOut 'launcher-build.log'
 
-    # /flp 让 MSBuild 额外写一份完整日志，失败时可把关键行转成注解
-    & $msbuild $launcherVcxp `
-        /p:Configuration=$Configuration `
-        /p:Platform=x64 `
-        /m /nologo /v:minimal `
-        "/flp:logfile=$msbuildLog;verbosity=normal"
+    # 完整捕获 MSBuild 的 stdout + stderr。
+    # CI 上曾出现"日志只到 PrepareForBuild 就断了"的现象 —— 说明 MSBuild 是异常终止
+    # 而非报编译错误，因此必须拿到退出码与真实输出。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'   # 避免 native stderr 触发陷阱
+    $output = @()
+    $exitCode = 0
+    try {
+        $output = & $msbuild $launcherVcxp `
+            /p:Configuration=$Configuration `
+            /p:Platform=x64 `
+            /nologo /v:normal 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
 
-    $exitCode = $LASTEXITCODE
+    Write-Host ''
+    Write-Host ("  MSBuild 退出码 : " + $exitCode)
+    Write-Host ("  捕获输出行数   : " + @($output).Count)
+    Write-Host ''
 
     if ($exitCode -ne 0) {
-        Write-Host ''
-        Write-Host "  MSBuild 失败（exit=$exitCode），以下为日志尾部：" -ForegroundColor Yellow
-        if (Test-Path $msbuildLog) {
-            Get-Content $msbuildLog -Tail 40 | ForEach-Object {
-                if ($_ -match '\S') { Write-Host ('::error::' + $_) }
-            }
-        }
-        else {
-            Write-Host ('::error::未生成 MSBuild 日志：' + $msbuildLog)
+        Write-Host '  ── MSBuild 输出尾部（同时作为注解，便于远程诊断）──' -ForegroundColor Yellow
+        foreach ($line in (@($output) | Select-Object -Last 80)) {
+            $text = ($line | Out-String).TrimEnd()
+            if ($text -match '\S') { Write-Host ('::error::' + $text) }
         }
         throw "启动器编译失败（MSBuild exit code = $exitCode）。"
     }
