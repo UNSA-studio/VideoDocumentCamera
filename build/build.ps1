@@ -50,6 +50,20 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# ── 让 CI 能"看见"失败原因 ──────────────────────────────────────────────────
+#  GitHub 的失败注解（annotations）只会捕获编译器 / MSBuild 的结构化输出；
+#  PowerShell 自己 throw 出来的消息不会变成注解 —— 结果是"只看到红叉，看不到原因"。
+#  这里把所有终止性错误手动转成 ::error:: 工作流命令。它会成为注解，
+#  因此可以直接通过 GitHub REST API 读取（无需日志下载权限）。
+trap {
+    $msg = ($_.Exception.Message -replace "`r?`n", ' | ')
+    Write-Host ('::error::[build.ps1] ' + $msg)
+    if ($_.InvocationInfo) {
+        Write-Host ('::error::[位置] 行 ' + $_.InvocationInfo.ScriptLineNumber + ' : ' + $_.InvocationInfo.Line.Trim())
+    }
+    exit 1
+}
+
 # ─────────────────────────── 路径 ───────────────────────────
 
 $root         = Split-Path -Parent $PSScriptRoot
@@ -134,22 +148,62 @@ if ($doLauncher) {
     Write-Host "  项目   : $launcherVcxp"
     Write-Host ''
 
+    New-Item -ItemType Directory -Path $buildOut -Force | Out-Null
+    $msbuildLog = Join-Path $buildOut 'launcher-build.log'
+
+    # /flp 让 MSBuild 额外写一份完整日志，失败时可把关键行转成注解
     & $msbuild $launcherVcxp `
         /p:Configuration=$Configuration `
         /p:Platform=x64 `
-        /m /nologo /v:minimal
+        /m /nologo /v:minimal `
+        "/flp:logfile=$msbuildLog;verbosity=normal"
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "启动器编译失败（MSBuild exit code = $LASTEXITCODE）。"
+    $exitCode = $LASTEXITCODE
+
+    if ($exitCode -ne 0) {
+        Write-Host ''
+        Write-Host "  MSBuild 失败（exit=$exitCode），以下为日志尾部：" -ForegroundColor Yellow
+        if (Test-Path $msbuildLog) {
+            Get-Content $msbuildLog -Tail 40 | ForEach-Object {
+                if ($_ -match '\S') { Write-Host ('::error::' + $_) }
+            }
+        }
+        else {
+            Write-Host ('::error::未生成 MSBuild 日志：' + $msbuildLog)
+        }
+        throw "启动器编译失败（MSBuild exit code = $exitCode）。"
     }
 
-    $launcherExe = Join-Path $buildOut "x64\$Configuration\VideoPresenter.Launcher.exe"
-    if (Test-Path $launcherExe) {
+    # 产物查找：先按预期路径，找不到则递归搜索并归位
+    $expected = Join-Path $buildOut "x64\$Configuration\VideoPresenter.Launcher.exe"
+    $launcherExe = $null
+
+    if (Test-Path $expected) {
+        $launcherExe = $expected
+    }
+    else {
+        $found = Get-ChildItem $buildOut -Recurse -Filter 'VideoPresenter.Launcher.exe' -File -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+        if ($found) {
+            Write-Host "  产物路径与预期不同，已自动定位：$($found.FullName)" -ForegroundColor Yellow
+            New-Item -ItemType Directory -Path (Split-Path $expected) -Force | Out-Null
+            Copy-Item $found.FullName $expected -Force
+            $launcherExe = $expected
+        }
+    }
+
+    if ($launcherExe) {
         $size = [Math]::Round((Get-Item $launcherExe).Length / 1KB, 1)
         Write-Host "  启动器编译完成：$launcherExe （$size KB）" -ForegroundColor Green
     }
     else {
-        throw "编译成功但未找到产物：$launcherExe"
+        Write-Host '::error::启动器编译成功，但未找到输出文件'
+        if (Test-Path $buildOut) {
+            Get-ChildItem $buildOut -Recurse -File | Select-Object -First 40 | ForEach-Object {
+                Write-Host ('::error::  build/out: ' + $_.FullName)
+            }
+        }
+        throw "编译成功但未找到 VideoPresenter.Launcher.exe（预期：$expected）"
     }
 }
 
