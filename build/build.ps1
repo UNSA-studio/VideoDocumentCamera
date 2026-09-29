@@ -253,21 +253,40 @@ if ($doApp) {
     Write-Host "  输出：$appOutDir"
     Write-Host ''
 
-    dotnet publish $appProj `
-        -c $Configuration `
-        -r win-x64 `
-        --self-contained true `
-        -o $appOutDir `
-        -p:Platform=x64 `
-        -p:Version=$version `
-        -p:PublishReadyToRun=true `
-        -p:WindowsPackageType=None `
-        -p:WindowsAppSDKSelfContained=true `
-        -p:DebugType=none `
-        --nologo
+    # 捕获完整输出：失败可能发生在编译之后的阶段（XAML 编译 / PRI / ReadyToRun /
+    # 自包含打包），这些工具的输出不会自动变成 GitHub 注解。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $publishOutput = @()
+    $publishExit = 0
+    try {
+        $publishOutput = & dotnet publish $appProj `
+            -c $Configuration `
+            -r win-x64 `
+            --self-contained true `
+            -o $appOutDir `
+            -p:Platform=x64 `
+            -p:Version=$version `
+            -p:PublishReadyToRun=true `
+            -p:WindowsPackageType=None `
+            -p:WindowsAppSDKSelfContained=true `
+            -p:DebugType=none `
+            --nologo 2>&1
+        $publishExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "主程序发布失败（dotnet exit code = $LASTEXITCODE）。"
+    Write-Host ('::warning::[诊断] dotnet publish 退出码 = ' + $publishExit + '，输出行数 = ' + @($publishOutput).Count)
+
+    if ($publishExit -ne 0) {
+        Write-Host '  ── dotnet publish 输出尾部 ──' -ForegroundColor Yellow
+        foreach ($line in (@($publishOutput) | Select-Object -Last 80)) {
+            $text = ($line | Out-String).TrimEnd()
+            if ($text -match '\S') { Write-Host ('::error::' + $text) }
+        }
+        throw "主程序发布失败（dotnet exit code = $publishExit）。"
     }
 
     # 启动器必须与主程序同目录（启动器按"同目录下的 VideoPresenter.exe"定位主程序）
