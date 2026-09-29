@@ -9,6 +9,15 @@
     <UseWinUI>true</UseWinUI>
 
     <!--
+      EnableMsixTooling=true（WinUI 3 模板的默认值）：
+      它会导入 MSIX / PRI 相关的 targets，让 resources.pri 能正常生成、
+      ms-appx:/// 资源引用能被解析。
+      注意它不是"要求 MSIX 打包"—— 配合下面的 WindowsPackageType=None
+      依然是普通的 unpackaged exe。
+    -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+
+    <!--
       非打包（unpackaged）模式：
       以普通 exe 运行，由 Windows App SDK 的 Bootstrap 自动初始化运行时，
       因此 MSI / EXE 安装包都不必处理 MSIX framework package，部署最干净。

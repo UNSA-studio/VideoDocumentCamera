@@ -1,0 +1,18 @@
+{
+  "//": "=========================================================================",
+  "//1": "视频展台 · .NET SDK 版本锁定",
+  "//2": "=========================================================================",
+  "//3": "为什么需要这个文件：",
+  "//4": "  构建机上可能预装了多个 .NET SDK。若不加约束，dotnet CLI 会选择",
+  "//5": "  【最新】的那个（例如 GitHub 的 windows-latest 预装了 .NET 10），",
+  "//6": "  而 Windows App SDK 1.6 的 PRI 生成任务只在 .NET 8 时代的路径下存在：",
+  "//7": "      error MSB4062: The \"Microsoft.Build.Packaging.Pri.Tasks.ExpandPriContent\"",
+  "//8": "      task could not be loaded from ...\\sdk\\10.0.401\\Microsoft\\VisualStudio\\v18.0\\AppxPackage\\...",
+  "//9": "  锁定到 8.0.x 后，MSBuild 会在 v17.0 路径下正确找到该任务。",
+  "//10": "  后续若要升级 Windows App SDK，请同步调整这里的版本。",
+  "sdk": {
+    "version": "8.0.100",
+    "rollForward": "latestFeature",
+    "allowPrerelease": false
+  }
+}
