@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    VideoPresenter · MSI 打包工程（WiX v4）
+    开发商：UNSA Studio
+
+    构建：
+        dotnet build installer/wix/VideoPresenter.Msi.wixproj -c Release -p:Platform=x64
+    或在仓库根目录执行：
+        ./build/build.ps1 -Package Msi
+-->
+<Project Sdk="WixToolset.Sdk/4.0.4">
+
+    <PropertyGroup>
+        <!-- ── 由 build.ps1 覆写；此处提供可直接编译的默认值 ── -->
+        <VpVersion Condition="'$(VpVersion)' == ''">1.0.0</VpVersion>
+        <VpPublishDir Condition="'$(VpPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\dist\app\</VpPublishDir>
+        <VpIconPath Condition="'$(VpIconPath)' == ''">$(MSBuildThisFileDirectory)..\..\src\VideoPresenter.App\Assets\VideoPresenter.ico</VpIconPath>
+
+        <OutputName>视频展台-$(VpVersion)-x64</OutputName>
+        <OutputType>Package</OutputType>
+        <Platform Condition="'$(Platform)' == ''">x64</Platform>
+        <InstallerPlatform>x64</InstallerPlatform>
+
+        <OutputPath>$(MSBuildThisFileDirectory)..\..\dist\</OutputPath>
+        <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\build\obj\Msi\$(Configuration)\</IntermediateOutputPath>
+
+        <SuppressIces>ICE61</SuppressIces>
+        <DefineConstants>VpVersion=$(VpVersion);VpPublishDir=$(VpPublishDir);VpIconPath=$(VpIconPath)</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Product.wxs"/>
+    </ItemGroup>
+
+</Project>

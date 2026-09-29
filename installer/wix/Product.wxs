@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ============================================================================
+     视频展台 · MSI 安装包定义（WiX v4）
+     开发商 / 制造商：UNSA Studio
+
+     安装布局
+     ────────────────────────────────────────────────────────────────────────
+       %ProgramFiles%\UNSA Studio\视频展台\
+           VideoPresenter.Launcher.exe    ← 桌面/开始菜单快捷方式指向它
+           VideoPresenter.exe
+           …（self-contained 运行时）
+
+     说明
+     ────────────────────────────────────────────────────────────────────────
+       * 快捷方式必须指向【启动器】而不是主程序 —— 这是"1 秒启动"体验的入口；
+       * 采用 <Files Include> 通配收集发布目录，新增文件无需修改本文件。
+    ============================================================================
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+    <Package Name="视频展台"
+             Manufacturer="UNSA Studio"
+             Version="$(VpVersion)"
+             UpgradeCode="{2F1C9E70-4B31-4A88-9C6E-5D0A7B3E8F42}"
+             Scope="perMachine"
+             Compressed="yes"
+             InstallerVersion="500"
+             Language="2052">
+
+        <SummaryInformation
+            Description="视频展台 安装程序（UNSA Studio）"
+            Manufacturer="UNSA Studio"/>
+
+        <!-- 升级策略：同版本可覆盖安装；降级给出明确提示 -->
+        <MajorUpgrade DowngradeErrorMessage="已安装更高版本的「视频展台」，请先卸载后再安装当前版本。"
+                      AllowSameVersionUpgrades="yes"/>
+        <MediaTemplate EmbedCab="yes"/>
+
+        <!-- 程序与控制面板图标 -->
+        <Icon Id="VpAppIcon" SourceFile="$(VpIconPath)"/>
+        <Property Id="ARPPRODUCTICON" Value="VpAppIcon"/>
+        <Property Id="ARPNOMODIFY" Value="1"/>
+        <Property Id="ARPHELPLINK" Value="https://www.unsa.studio/"/>
+        <Property Id="ARPCOMMENTS" Value="视频展台 —— 实物展台 / 高拍仪高清采集与教学批注"/>
+
+        <!-- ══════════ 目录结构 ══════════ -->
+        <StandardDirectory Id="ProgramFiles64Folder">
+            <Directory Id="MANUFACTURERFOLDER" Name="UNSA Studio">
+                <Directory Id="INSTALLFOLDER" Name="视频展台"/>
+            </Directory>
+        </StandardDirectory>
+
+        <StandardDirectory Id="ProgramMenuFolder">
+            <Directory Id="AppMenuFolder" Name="UNSA Studio"/>
+        </StandardDirectory>
+
+        <StandardDirectory Id="DesktopFolder"/>
+
+        <!-- ══════════ 功能与组件 ══════════ -->
+        <Feature Id="MainFeature" Title="视频展台" Level="1" AllowAbsent="no">
+            <ComponentGroupRef Id="AppFilesGroup"/>
+            <ComponentGroupRef Id="ShortcutGroup"/>
+        </Feature>
+
+    </Package>
+
+    <!-- ══════════════════ 主程序文件（自动收集发布目录） ══════════════════ -->
+    <Fragment>
+        <ComponentGroup Id="AppFilesGroup" Directory="INSTALLFOLDER">
+            <!--
+                通配收集 dist/app 下的全部文件；
+                每个文件自动生成独立 Component（GUID 由编译器生成）。
+            -->
+            <Files Include="$(VpPublishDir)**"/>
+        </ComponentGroup>
+    </Fragment>
+
+    <!-- ══════════════════ 快捷方式 / 卸载信息 ══════════════════ -->
+    <Fragment>
+        <ComponentGroup Id="ShortcutGroup" Directory="INSTALLFOLDER">
+
+            <Component Id="ShortcutsComponent" Guid="{8B4C2E16-7F93-4D0A-B5E2-91A6C0D4F738}">
+                <!-- 桌面快捷方式：指向启动器 -->
+                <Shortcut Id="DesktopShortcut"
+                          Directory="DesktopFolder"
+                          Name="视频展台"
+                          Description="视频展台 —— UNSA Studio"
+                          Target="[INSTALLFOLDER]VideoPresenter.Launcher.exe"
+                          WorkingDirectory="INSTALLFOLDER"
+                          Icon="VpAppIcon"/>
+
+                <!-- 开始菜单快捷方式 -->
+                <Shortcut Id="StartMenuShortcut"
+                          Directory="AppMenuFolder"
+                          Name="视频展台"
+                          Description="视频展台 —— UNSA Studio"
+                          Target="[INSTALLFOLDER]VideoPresenter.Launcher.exe"
+                          WorkingDirectory="INSTALLFOLDER"
+                          Icon="VpAppIcon"/>
+
+                <RemoveFolder Id="RemoveAppMenuFolder" Directory="AppMenuFolder" On="uninstall"/>
+
+                <!-- 组件 KeyPath（同时用于标记"已安装"状态） -->
+                <RegistryValue Root="HKCU"
+                               Key="Software\UNSA Studio\视频展台"
+                               Name="InstalledVersion"
+                               Type="string"
+                               Value="$(VpVersion)"
+                               KeyPath="yes"/>
+            </Component>
+
+        </ComponentGroup>
+    </Fragment>
+
+</Wix>

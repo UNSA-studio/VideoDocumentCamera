@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="VideoPresenter.App.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- WinUI 3 标准控件资源（Fluent）-->
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+
+                <!--
+                    ════════════════════════════════════════════════════════════
+                     ★ 主题策略：本应用【不定义任何自己的颜色】
+
+                     全部 UI 均引用系统主题资源（ThemeResource），例如：
+                         TextFillColorPrimaryBrush            主文本
+                         TextFillColorSecondaryBrush          次要文本
+                         CardBackgroundFillColorDefaultBrush  卡片 / 面板
+                         LayerFillColorDefaultBrush           层（半透明，透出 Mica）
+                         DividerStrokeColorDefaultBrush       分隔线
+                         SolidBackgroundFillColorBaseBrush    状态栏 / 实心底
+                         ControlFillColorDefaultBrush         输入控件底
+                         AccentFillColorDefaultBrush          强调色
+                         SystemAccentColor                    系统强调色
+
+                     这些资源由 WinUI 运行时按系统主题自动切换浅色 / 深色两套值，
+                     并直接读取用户在「设置 → 个性化 → 颜色」中选择的强调色。
+                     系统主题一变，窗口内的所有颜色立即跟随，无需重启。
+
+                     因此：软件配色 = 你的系统配色。
+                     本程序不提供"切换主题"开关 —— 那是系统该管的事。
+                    ════════════════════════════════════════════════════════════
+                -->
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
+</Application>

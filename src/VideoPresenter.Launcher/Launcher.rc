@@ -1,0 +1,51 @@
+// ============================================================================
+//  VideoPresenter.Launcher 资源脚本
+//  开发商：UNSA Studio
+//
+//  说明：Assets\VideoPresenter.ico 由 build/build.ps1 在构建前自动生成占位图标
+//        （或用 build/tools/make-icon.ps1 生成正式图标后覆盖）。
+// ============================================================================
+
+#include <windows.h>
+#include "resource.h"
+
+/////////////////////////////////////////////////////////////////////////////
+// 图标
+IDI_APP                ICON    "Assets\\VideoPresenter.ico"
+IDI_APP_SMALL          ICON    "Assets\\VideoPresenter.ico"
+
+/////////////////////////////////////////////////////////////////////////////
+// 版本信息（与 Directory.Build.props 保持一致）
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION     1,0,0,0
+ PRODUCTVERSION  1,0,0,0
+ FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS       VS_FF_DEBUG
+#else
+ FILEFLAGS       0x0L
+#endif
+ FILEOS          VOS_NT_WINDOWS32
+ FILETYPE        VFT_APP
+ FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"   // 简体中文 (2048) + Unicode
+        BEGIN
+            VALUE "CompanyName",      "UNSA Studio"
+            VALUE "FileDescription",  "视频展台 · 启动器"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "InternalName",     "VideoPresenter.Launcher"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 UNSA Studio. All rights reserved."
+            VALUE "OriginalFilename", "VideoPresenter.Launcher.exe"
+            VALUE "ProductName",      "视频展台"
+            VALUE "ProductVersion",   "1.0.0.0"
+            VALUE "Comments",         "轻量启动器：1 秒内出界面，握手完成后自动退出。"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

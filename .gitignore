@@ -1,0 +1,29 @@
+# ───────────────────────────── 构建产物 ─────────────────────────────
+bin/
+obj/
+dist/
+build/out/
+build/obj/
+*.user
+*.suo
+.vs/
+
+# ───────────────────────────── 图标资源 ─────────────────────────────
+# 说明：应用图标已入库（仓库中直接可用）：
+#   src/VideoPresenter.App/Assets/VideoPresenter.ico   （多尺寸 ICO）
+#   src/VideoPresenter.App/Assets/AppIcon.png          （标题栏）
+#   src/VideoPresenter.Launcher/Assets/VideoPresenter.ico
+# 如需按品牌色重新生成，运行 build/tools/make-icon.ps1 并用 -Force 覆盖。
+
+# ───────────────────────────── 签名材料 ─────────────────────────────
+# 私钥绝不入库
+certs/
+*.pfx
+*.pvk
+*.snk
+
+# ───────────────────────────── 其他 ─────────────────────────────
+*.log
+*.tmp
+Thumbs.db
+.DS_Store

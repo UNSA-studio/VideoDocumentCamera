@@ -1,0 +1,32 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- ============ 产品身份 ============ -->
+    <ProductName>视频展台</ProductName>
+    <ProductNameEn>VideoPresenter</ProductNameEn>
+    <CompanyName>UNSA Studio</CompanyName>
+    <Manufacturer>UNSA Studio</Manufacturer>
+    <Authors>UNSA Studio</Authors>
+    <Copyright>Copyright © 2026 UNSA Studio. All rights reserved.</Copyright>
+
+    <!-- 数字签名主体必须与 CompanyName 完全一致 -->
+    <SignSubject>CN=UNSA Studio, O=UNSA Studio, C=CN</SignSubject>
+
+    <VersionMajor>1</VersionMajor>
+    <VersionMinor>0</VersionMinor>
+    <VersionPatch>0</VersionPatch>
+    <Version>$(VersionMajor).$(VersionMinor).$(VersionPatch)</Version>
+    <FileVersion>$(Version).0</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+
+    <!-- ============ 全局编译策略 ============ -->
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <NeutralLanguage>zh-CN</NeutralLanguage>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>

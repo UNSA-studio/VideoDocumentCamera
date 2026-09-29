@@ -1,0 +1,66 @@
+# ============================================================================
+#  视频展台 · 跨平台换行符 / 二进制文件策略
+#
+#  为什么需要它：
+#    开发机可能是 Windows（CRLF），CI 是 Windows（CRLF），
+#    而有些协作设备是 Linux/macOS（LF）。
+#    如果不管，Git 会在 checkout 时自动转换，导致：
+#      · C++ / C# 源码出现满屏无意义的 diff
+#      · .ico / .png 被"文本化"后损坏（这会让应用图标变空白）
+#    因此显式声明一遍。
+# ============================================================================
+
+# 默认：由 Git 自动识别文本文件，仓库内统一存 LF
+* text=auto
+
+# ───────────────────────── 二进制：绝不转换 ─────────────────────────
+*.ico   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bmp   binary
+*.pdf   binary
+*.pfx   binary
+*.snk   binary
+*.zip   binary
+*.msi   binary
+*.exe   binary
+*.dll   binary
+*.cab   binary
+
+# ─────────────────────── Visual Studio 工程文件 ───────────────────────
+# .sln / .vcxproj 由 VS 生成，保持 CRLF 以避免 VS 反复重写
+*.sln       text eol=crlf
+*.vcxproj   text eol=crlf
+*.vcxproj.filters text eol=crlf
+*.wixproj   text eol=crlf
+
+# ─────────────────────────── 源码：统一 LF ───────────────────────────
+*.cs       text eol=lf
+*.xaml     text eol=lf
+*.cpp      text eol=lf
+*.h        text eol=lf
+*.rc       text eol=lf
+*.wxs      text eol=lf
+*.manifest text eol=lf
+*.props    text eol=lf
+*.targets  text eol=lf
+*.csproj   text eol=lf
+*.json     text eol=lf
+*.md       text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.py       text eol=lf
+*.sh       text eol=lf
+
+# PowerShell 脚本：Windows 生态下用 CRLF 最稳（含 PS 5.1）
+*.ps1      text eol=crlf
+*.psm1     text eol=crlf
+
+# Inno Setup 脚本：Windows-only 工具链
+*.iss      text eol=crlf
+
+# ───────────────────────── 语言统计（GitHub Linguist）─────────────────────────
+# 启动器的 Splash 是自绘的，但没必要把仓库标成 "C++ 为主"
+*.iss      linguist-language=Inno-Setup

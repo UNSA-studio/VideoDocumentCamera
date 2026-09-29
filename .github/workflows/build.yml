@@ -1,0 +1,101 @@
+# ============================================================================
+#  视频展台 · 云构建流水线
+#
+#  为什么需要它：
+#    MSI / EXE 只能在 Windows 上打包（详见 docs/BUILD_ENVIRONMENT.md）：
+#      · C++ 启动器需要 MSVC（Windows-only 编译器）
+#      · WinUI 3 项目被 Windows App SDK 限制为「仅可在 Windows 宿主上构建」
+#      · Inno Setup (ISCC.exe) / signtool 均为原生 Windows 程序
+#    因此把打包搬到 GitHub 的 windows-latest runner 上，本地无需安装任何工具链。
+#
+#  产物：
+#    · 视频展台-1.0.0-x64.msi          （WiX v4 安装包）
+#    · 视频展台-1.0.0-x64-setup.exe    （Inno Setup 安装包）
+#    · 视频展台-便携版（dist/app 整目录，可直接拷贝运行）
+#
+#  用法：
+#    · 推到 main / master 分支      → 自动构建
+#    · 打 tag（如 v1.0.0）           → 自动构建，可用作 Release 附件
+#    · 手动：Actions 页面 → Run workflow
+# ============================================================================
+
+name: 构建视频展台
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  CONFIGURATION: 'Release'
+
+jobs:
+  build-windows:
+    name: 构建 Windows 安装包（MSI + EXE）
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. 取源码 ──────────────────────────────────────────────────────
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # ── 2. .NET 8 SDK ──────────────────────────────────────────────────
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # ── 3. MSBuild（含「使用 C++ 的桌面开发」工作负载与 Windows SDK）──
+      #      windows-latest 已预装 VS2022，此步骤只是确保 msbuild 在 PATH 上
+      - name: 配置 MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # ── 4. WiX v4（生成 MSI）───────────────────────────────────────────
+      - name: 安装 WiX v4
+        run: dotnet tool install --global wix
+
+      # ── 5. Inno Setup 6（生成 EXE 安装包）──────────────────────────────
+      - name: 安装 Inno Setup 6
+        run: choco install innosetup --no-progress -y
+        shell: pwsh
+
+      # ── 6. 构建 ────────────────────────────────────────────────────────
+      #      -SkipIcon：图标已入库，无需重新生成（避免覆盖设计稿）
+      - name: 构建（启动器 + 主程序 + 双安装包）
+        run: pwsh -ExecutionPolicy Bypass -File ./build/build.ps1 -Configuration ${{ env.CONFIGURATION }} -Package All -SkipIcon
+        shell: pwsh
+
+      # ── 7. 收集产物 ────────────────────────────────────────────────────
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: 视频展台-安装包
+          path: |
+            dist/*.msi
+            dist/*-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传便携版
+        uses: actions/upload-artifact@v4
+        with:
+          name: 视频展台-便携版
+          path: dist/app/**
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── 8. 打 tag 时顺带挂到 Release ───────────────────────────────────
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.msi
+            dist/*-setup.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

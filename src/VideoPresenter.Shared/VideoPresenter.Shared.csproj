@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>VideoPresenter.Shared</RootNamespace>
+    <AssemblyName>VideoPresenter.Shared</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- 该程序集被启动器/主程序共用，保持最小依赖 -->
+    <EnableDefaultItems>true</EnableDefaultItems>
+  </PropertyGroup>
+
+</Project>
