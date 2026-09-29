@@ -65,16 +65,17 @@
 
     </Package>
 
-    <!-- ══════════════════ 主程序文件（自动收集发布目录） ══════════════════ -->
-    <Fragment>
-        <ComponentGroup Id="AppFilesGroup" Directory="INSTALLFOLDER">
-            <!--
-                通配收集 dist/app 下的全部文件；
-                每个文件自动生成独立 Component（GUID 由编译器生成）。
-            -->
-            <Files Include="$(VpPublishDir)**"/>
-        </ComponentGroup>
-    </Fragment>
+    <!--
+        ══════════════════ 主程序文件 ══════════════════
+
+        ComponentGroup Id="AppFilesGroup" 不在这里定义 —— 它由 build.ps1
+        扫描 dist/app 后生成的 GeneratedFiles.wxs 提供。
+
+        原因：WiX v4.0.4 的 <ComponentGroup> 不接受 <Files> 收割元素，
+              会报 "The ComponentGroup element contains an unexpected child
+              element 'Files'"，因此改为「构建时生成标准 fragment」，
+              等价于 heat.exe，但不依赖 WiX 的具体版本行为。
+    -->
 
     <!-- ══════════════════ 快捷方式 / 卸载信息 ══════════════════ -->
     <Fragment>

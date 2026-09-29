@@ -8,6 +8,9 @@ build/obj/
 *.suo
 .vs/
 
+# WiX 文件清单：由 build.ps1 每次构建时扫描 dist/app 重新生成
+installer/wix/GeneratedFiles.wxs
+
 # ───────────────────────────── 图标资源 ─────────────────────────────
 # 说明：应用图标已入库（仓库中直接可用）：
 #   src/VideoPresenter.App/Assets/VideoPresenter.ico   （多尺寸 ICO）

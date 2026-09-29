@@ -30,6 +30,8 @@
 
     <ItemGroup>
         <Compile Include="Product.wxs"/>
+        <!-- 由 build.ps1 扫描 dist/app 生成（见 build.ps1 的 MSI 阶段） -->
+        <Compile Include="GeneratedFiles.wxs" Condition="Exists('GeneratedFiles.wxs')"/>
     </ItemGroup>
 
 </Project>

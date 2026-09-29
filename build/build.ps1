@@ -336,20 +336,69 @@ if ($doMsi) {
     # 末尾不带反斜杠，避免 PowerShell / MSBuild 的引号歧义
     $publishDir = $appOutDir.TrimEnd('\') + '\'
 
+    # ── 生成 WiX 文件清单 ────────────────────────────────────────────────
+    #  WiX v4.0.4 的 <ComponentGroup> 不接受 <Files> 子元素，会报：
+    #      The ComponentGroup element contains an unexpected child element 'Files'
+    #  因此这里自己扫描发布目录并生成标准 fragment —— 等价于 heat.exe 的工作，
+    #  但行为完全可控，也不受 WiX 版本差异影响。
+    $generatedWxs = Join-Path (Split-Path $msiProj) 'GeneratedFiles.wxs'
+    $allFiles = Get-ChildItem $appOutDir -Recurse -File
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('<?xml version="1.0" encoding="utf-8"?>')
+    [void]$sb.AppendLine('<!-- 本文件由 build.ps1 自动生成（扫描 dist/app），请勿手工编辑 -->')
+    [void]$sb.AppendLine('<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">')
+    [void]$sb.AppendLine('  <Fragment>')
+    [void]$sb.AppendLine('    <ComponentGroup Id="AppFilesGroup">')
+
+    $i = 0
+    foreach ($f in $allFiles) {
+        $i++
+        $id = $i.ToString('D4')
+        $src = [System.Security.SecurityElement]::Escape($f.FullName)
+        [void]$sb.AppendLine(('      <Component Id="cmp{0}" Directory="INSTALLFOLDER" Guid="*">' -f $id))
+        [void]$sb.AppendLine(('        <File Id="fil{0}" Source="{1}" KeyPath="yes" />' -f $id, $src))
+        [void]$sb.AppendLine('      </Component>')
+    }
+
+    [void]$sb.AppendLine('    </ComponentGroup>')
+    [void]$sb.AppendLine('  </Fragment>')
+    [void]$sb.AppendLine('</Wix>')
+
+    [IO.File]::WriteAllText($generatedWxs, $sb.ToString(), (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "  已生成 WiX 文件清单：$generatedWxs （$i 个文件）"
+
     Write-Host "  工程        : $msiProj"
     Write-Host "  VpPublishDir: $publishDir"
     Write-Host "  VpVersion   : $version"
     Write-Host ''
 
-    dotnet build $msiProj `
-        -c $Configuration `
-        -p:Platform=x64 `
-        -p:VpPublishDir="$publishDir" `
-        -p:VpVersion=$version `
-        --nologo
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $msiOutput = @()
+    $msiExit = 0
+    try {
+        $msiOutput = & dotnet build $msiProj `
+            -c $Configuration `
+            -p:Platform=x64 `
+            -p:VpPublishDir="$publishDir" `
+            -p:VpVersion=$version `
+            --nologo 2>&1
+        $msiExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "MSI 打包失败（dotnet exit code = $LASTEXITCODE）。"
+    Write-Host ('::warning::[诊断] WiX 退出码 = ' + $msiExit + '，输出行数 = ' + @($msiOutput).Count)
+
+    if ($msiExit -ne 0) {
+        Write-Host '  ── WiX 输出尾部 ──' -ForegroundColor Yellow
+        foreach ($line in (@($msiOutput) | Select-Object -Last 80)) {
+            $text = ($line | Out-String).TrimEnd()
+            if ($text -match '\S') { Write-Host ('::error::' + $text) }
+        }
+        throw "MSI 打包失败（dotnet exit code = $msiExit）。"
     }
     Write-Host '  MSI 打包完成。' -ForegroundColor Green
 }
@@ -376,10 +425,27 @@ if ($doExe) {
     Write-Host "  脚本: $issFile"
     Write-Host ''
 
-    & $iscc "/DMyAppVersion=$version" $issFile
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $isccOutput = @()
+    $isccExit = 0
+    try {
+        $isccOutput = & $iscc "/DMyAppVersion=$version" $issFile 2>&1
+        $isccExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "EXE 打包失败（ISCC exit code = $LASTEXITCODE）。"
+    Write-Host ('::warning::[诊断] ISCC 退出码 = ' + $isccExit + '，输出行数 = ' + @($isccOutput).Count)
+
+    if ($isccExit -ne 0) {
+        Write-Host '  ── ISCC 输出尾部 ──' -ForegroundColor Yellow
+        foreach ($line in (@($isccOutput) | Select-Object -Last 60)) {
+            $text = ($line | Out-String).TrimEnd()
+            if ($text -match '\S') { Write-Host ('::error::' + $text) }
+        }
+        throw "EXE 打包失败（ISCC exit code = $isccExit）。"
     }
     Write-Host '  EXE 打包完成。' -ForegroundColor Green
 }
