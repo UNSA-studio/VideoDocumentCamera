@@ -255,7 +255,7 @@ public sealed class MediaFoundationCameraService : ICameraService
         IMFMediaType? type = null;
         try
         {
-            if (MFCreateMediaType(out type) < 0) return false;
+            if (MFCreateMediaType(out type) < 0 || type is null) return false;
 
             Guid major = MF_MT_MAJOR_TYPE, video = MFMediaType_Video;
             Guid sub = MF_MT_SUBTYPE, rgb32 = MFVideoFormat_RGB32;
@@ -406,8 +406,10 @@ public sealed class MediaFoundationCameraService : ICameraService
 
         try
         {
-            // 返回副本：采集线程会持续改写 _bitmap，直接返回会导致拍照结果撕裂
-            return bitmap.Copy(bitmap.BitmapPixelFormat, bitmap.BitmapAlphaMode);
+            // 返回副本：采集线程会持续改写 _bitmap，直接返回会导致拍照结果撕裂。
+            // 注意 SoftwareBitmap.Copy() 是【无参】的（同格式副本）；
+            // 需要换格式请用静态方法 SoftwareBitmap.Convert(source, format, alpha)。
+            return bitmap.Copy();
         }
         catch (Exception ex)
         {
