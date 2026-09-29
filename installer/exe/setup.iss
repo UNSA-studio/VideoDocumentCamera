@@ -14,11 +14,28 @@
 ;        · EXE —— 适合个人用户（向导更友好，中文体验更完整）
 ; ============================================================================
 
-#define MyAppName "视频展台"
-#define MyAppVersion "1.0.0"
-#define MyAppPublisher "UNSA Studio"
-#define MyAppURL "https://www.unsa.studio/"
-#define MyAppExeName "VideoPresenter.Launcher.exe"
+; ── 产品信息 ─────────────────────────────────────────────────────────────────
+;  用 #ifndef 包裹：命令行可以用 ISCC /DMyAppName="…" /DMyAppVersion="…" 覆盖；
+;  若不包裹，命令行定义与这里的 #define 同名会触发 ISPP 的重复符号错误。
+#ifndef MyAppName
+  #define MyAppName "视频展台"
+#endif
+
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0"
+#endif
+
+#ifndef MyAppPublisher
+  #define MyAppPublisher "UNSA Studio"
+#endif
+
+#ifndef MyAppURL
+  #define MyAppURL "https://www.unsa.studio/"
+#endif
+
+#ifndef MyAppExeName
+  #define MyAppExeName "VideoPresenter.Launcher.exe"
+#endif
 
 [Setup]
 ; AppId 一旦发布不可更改，否则会被视为另一个产品

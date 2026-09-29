@@ -199,6 +199,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public int SnapshotCount => Snapshots.Count;
 
+    /// <summary>
+    /// 数量的字符串形式。
+    /// <para>
+    /// 存在的理由：x:Bind 是<b>编译期强类型</b>绑定，不会像传统 Binding 那样自动
+    /// 调用 ToString()。把 int 直接绑到 TextBlock.Text 会编译失败，
+    /// 因此这里显式提供 string。
+    /// </para>
+    /// </summary>
+    public string SnapshotCountText => Snapshots.Count.ToString();
+
     /// <summary>启动耗时（体现"启动器 1 秒内出界面"）。</summary>
     public string BootInfoText => BootSignal.Instance.HasSession
         ? $"启动耗时 {BootSignal.Instance.ElapsedMs} ms"
@@ -356,6 +366,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             });
 
             OnPropertyChanged(nameof(SnapshotCount));
+            OnPropertyChanged(nameof(SnapshotCountText));
             (ClearSnapshotsCommand as RelayCommand)?.RaiseCanExecuteChanged();
             StatusText = $"已拍摄：{fileName}";
         }
@@ -383,6 +394,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Snapshots.Remove(_selectedSnapshot);
         SelectedSnapshot = null;
         OnPropertyChanged(nameof(SnapshotCount));
+        OnPropertyChanged(nameof(SnapshotCountText));
         (ClearSnapshotsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         StatusText = "已删除素材";
     }
@@ -402,6 +414,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         Snapshots.Clear();
         OnPropertyChanged(nameof(SnapshotCount));
+        OnPropertyChanged(nameof(SnapshotCountText));
         (ClearSnapshotsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         StatusText = "已清空素材";
     }

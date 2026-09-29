@@ -218,14 +218,24 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    // ══════════════════════ 窗口级动作 ══════════════════════
-
+    // ── 窗口级动作 ─────────────────────────────────────────────────────
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName != nameof(MainViewModel.IsTopmost)) return;
+        switch (e.PropertyName)
+        {
+            case nameof(MainViewModel.IsTopmost):
+                if (AppWindow.Presenter is OverlappedPresenter presenter)
+                    presenter.IsAlwaysOnTop = Vm.IsTopmost;
+                break;
 
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-            presenter.IsAlwaysOnTop = Vm.IsTopmost;
+            case nameof(MainViewModel.IsRightPanelOpen):
+                // 说明：ColumnDefinition 不是 FrameworkElement，
+            //   因此它的 Width 不能走 x:Bind（XAML 编译器会拒绝），
+            //   这里由代码直接联动，最稳。
+                if (RightPanelColumn is not null)
+                    RightPanelColumn.Width = Vm.RightPanelWidth;
+                break;
+        }
     }
 
     /// <summary>全屏切换：直接使用 AppWindow 的原生呈现器，最稳。</summary>

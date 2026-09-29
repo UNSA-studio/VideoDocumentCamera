@@ -11,6 +11,15 @@
 #include <windows.h>
 #include <cstdint>
 
+// ── C 运行时（MSVC 安全 CRT）──────────────────────────────────────────────────
+//  ⚠ 这两个头必须【在本文件内】包含，不能依赖使用方。
+//     本文件在第 73 / 75 行使用了 swprintf_s，而 main.cpp 的
+//     #include <cstdio> 出现在 #include "VpIpc.h" 之后 ——
+//     编译器是单遍的，轮到 VpIpc.h 时还看不到该声明。
+//     （CI 上曾因此在 VpIpc.h:73/75 报 'swprintf_s': identifier not found）
+#include <stdio.h>    // swprintf_s（C11 Annex K + MSVC 模板重载）
+#include <wchar.h>    // wcscpy_s / wcscat_s / wcsrchr / wcslen
+
 // ── 协议常量 ────────────────────────────────────────────────────────────────
 #define VP_MAGIC             0x31535056u   // 'V','P','S','1'
 #define VP_PROTOCOL_VERSION  1u

@@ -7,12 +7,15 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <UseWinUI>true</UseWinUI>
-    <EnableMsixTooling>false</EnableMsixTooling>
 
     <!--
       非打包（unpackaged）模式：
       以普通 exe 运行，由 Windows App SDK 的 Bootstrap 自动初始化运行时，
       因此 MSI / EXE 安装包都不必处理 MSIX framework package，部署最干净。
+
+      注：不设置 EnableMsixTooling —— unpackaged 项目不需要 MSIX 工具链，
+          但 PRI 资源索引（resources.pri）由 Windows App SDK 的 targets 生成，
+          保持默认即可，显式关掉反而可能缺少资源索引。
     -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
