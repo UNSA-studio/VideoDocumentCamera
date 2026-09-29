@@ -74,6 +74,18 @@
       <BufferSecurityCheck>true</BufferSecurityCheck>
       <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+
+    <ResourceCompile>
+      <!--
+        ★ 关键：rc.exe 默认按【系统 ANSI 代码页】解析 .rc / .h 源码。
+          Launcher.rc 与 resource.h 是 UTF-8 编码且含中文（产品名、版本信息），
+          不指定代码页会字节错位，最终报
+              resource.h(5): fatal error RC1004: unexpected end of file found
+          65001 = UTF-8。
+      -->
+      <AdditionalOptions>/c65001 %(AdditionalOptions)</AdditionalOptions>
+    </ResourceCompile>
+
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>

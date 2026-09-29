@@ -39,9 +39,6 @@
 # ─────────────────────────── 源码：统一 LF ───────────────────────────
 *.cs       text eol=lf
 *.xaml     text eol=lf
-*.cpp      text eol=lf
-*.h        text eol=lf
-*.rc       text eol=lf
 *.wxs      text eol=lf
 *.manifest text eol=lf
 *.props    text eol=lf
@@ -53,6 +50,16 @@
 *.yaml     text eol=lf
 *.py       text eol=lf
 *.sh       text eol=lf
+
+# ── C++ 源码：CRLF ───────────────────────────────────────────────────
+#  MSVC 工具链在 Windows 上按 CRLF 处理最稳。rc.exe 尤其对
+#  「UTF-8 无 BOM + LF + 非 ASCII 字符」的解析有缺陷，会报
+#      RC1004: unexpected end of file found
+#  因此这里强制 checkout 为 CRLF（仓库内部仍按 LF 存储，diff 干净）。
+*.cpp      text eol=crlf
+*.h        text eol=crlf
+*.rc       text eol=crlf
+*.def      text eol=crlf
 
 # PowerShell 脚本：Windows 生态下用 CRLF 最稳（含 PS 5.1）
 *.ps1      text eol=crlf

@@ -48,6 +48,27 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      # ── 规范化 C++ 源文件行尾 ────────────────────────────────────────────
+      #  MSVC 工具链在 Windows 上按 CRLF 处理最稳；rc.exe 对
+      #  「UTF-8 无 BOM + LF + 中文」的解析有缺陷，会报
+      #      RC1004: unexpected end of file found
+      #  .gitattributes 已声明 eol=crlf，这里再做一次兜底，保证万无一失。
+      - name: 规范化 C++ 源文件行尾（CRLF）
+        run: |
+          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+          $n = 0
+          Get-ChildItem -Recurse -Include *.h,*.cpp,*.rc,*.def -File | ForEach-Object {
+              $t = [IO.File]::ReadAllText($_.FullName)
+              $t = $t -replace "`r`n", "`n"
+              $t = $t -replace "`n", "`r`n"
+              [IO.File]::WriteAllText($_.FullName, $t, $utf8NoBom)
+              $n++
+          }
+          Write-Host "已规范化 $n 个 C++ 源文件为 CRLF"
+        shell: pwsh
+
+      # ── 规范化 C++ 源文件行尾 ────────────────────────────────────────────
+
       - name: 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
