@@ -140,43 +140,68 @@ elseif ($SkipIcon -or $doIcon) {
 if ($doLauncher) {
     Write-Step '① 编译启动器（原生 Win32 C++）'
 
-    $msbuild = Find-MSBuild
-    if (-not $msbuild) {
-        throw '未找到 MSBuild。请安装 Visual Studio（勾选「使用 C++ 的桌面开发」工作负载）。'
+    # ── 定位 Visual Studio（必须含 MSVC v143 C++ 工具集）─────────────────────
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) {
+        throw '找不到 vswhere.exe（需要安装 Visual Studio 2017 及以上）。'
     }
-    Write-Host "  MSBuild: $msbuild"
-    Write-Host "  项目   : $launcherVcxp"
+
+    $vsInstall = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath | Select-Object -First 1
+
+    if (-not $vsInstall) {
+        throw '未找到包含「MSVC v143 - VS 2022 C++ x64/x86 生成工具」的 Visual Studio 安装。'
+    }
+    $vsInstall = $vsInstall.Trim()
+
+    $devCmd      = Join-Path $vsInstall 'Common7\Tools\VsDevCmd.bat'
+    $msbuildFull = Join-Path $vsInstall 'MSBuild\Current\Bin\MSBuild.exe'
+
+    Write-Host "  VS 安装目录 : $vsInstall"
+    Write-Host "  VsDevCmd    : $devCmd  (存在: $(Test-Path $devCmd))"
+    Write-Host "  MSBuild     : $msbuildFull  (存在: $(Test-Path $msbuildFull))"
+    Write-Host "  项目        : $launcherVcxp"
     Write-Host ''
 
-    New-Item -ItemType Directory -Path $buildOut -Force | Out-Null
-    $msbuildLog = Join-Path $buildOut 'launcher-build.log'
+    if (-not (Test-Path $devCmd)) {
+        throw "找不到 VsDevCmd.bat：$devCmd"
+    }
+    if (-not (Test-Path $msbuildFull)) {
+        throw "找不到 MSBuild.exe：$msbuildFull"
+    }
 
-    # 完整捕获 MSBuild 的 stdout + stderr。
-    # CI 上曾出现"日志只到 PrepareForBuild 就断了"的现象 —— 说明 MSBuild 是异常终止
-    # 而非报编译错误，因此必须拿到退出码与真实输出。
+    New-Item -ItemType Directory -Path $buildOut -Force | Out-Null
+
+    # ── 在 VS 开发者环境中构建 ────────────────────────────────────────────
+    #  C++ 项目依赖完整的 INCLUDE / LIB / PATH（cl.exe、rc.exe、link.exe 都靠它定位）。
+    #  仅在普通 PowerShell 里直接调 MSBuild 时，它可能在 PrepareForBuild 之后
+    #  静默终止（CI 上实测输出到 InitializeBuildStatus 就断了）。
+    $inner = 'call "{0}" -arch=x64 -host_arch=x64 >nul 2>&1 && "{1}" "{2}" /p:Configuration={3} /p:Platform=x64 /nologo /v:minimal' -f `
+        $devCmd, $msbuildFull, $launcherVcxp, $Configuration
+
+    Write-Host "  cmd /c $inner"
+    Write-Host ''
+
     $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'   # 避免 native stderr 触发陷阱
+    $ErrorActionPreference = 'Continue'
     $output = @()
     $exitCode = 0
     try {
-        $output = & $msbuild $launcherVcxp `
-            /p:Configuration=$Configuration `
-            /p:Platform=x64 `
-            /nologo /v:normal 2>&1
+        $output = & cmd.exe /c $inner 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $prevEap
     }
 
-    Write-Host ''
-    Write-Host ("  MSBuild 退出码 : " + $exitCode)
-    Write-Host ("  捕获输出行数   : " + @($output).Count)
+    # 用 warning 级别输出诊断（同样会变成注解，可通过 API 读取）
+    Write-Host ('::warning::[诊断] MSBuild 退出码 = ' + $exitCode + '，输出行数 = ' + @($output).Count)
     Write-Host ''
 
     if ($exitCode -ne 0) {
-        Write-Host '  ── MSBuild 输出尾部（同时作为注解，便于远程诊断）──' -ForegroundColor Yellow
-        foreach ($line in (@($output) | Select-Object -Last 80)) {
+        Write-Host '  ── MSBuild 输出尾部 ──' -ForegroundColor Yellow
+        foreach ($line in (@($output) | Select-Object -Last 60)) {
             $text = ($line | Out-String).TrimEnd()
             if ($text -match '\S') { Write-Host ('::error::' + $text) }
         }
