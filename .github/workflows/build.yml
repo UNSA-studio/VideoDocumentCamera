@@ -61,10 +61,14 @@ jobs:
               $t = [IO.File]::ReadAllText($_.FullName)
               $t = $t -replace "`r`n", "`n"
               $t = $t -replace "`n", "`r`n"
+              # ★ rc.exe 要求 .rc / .h 必须以换行结束，否则最后一条预处理指令
+              #   没有终止符，预处理器一路读到物理 EOF，报
+              #       RC1004: unexpected end of file found
+              if (-not $t.EndsWith("`r`n")) { $t += "`r`n" }
               [IO.File]::WriteAllText($_.FullName, $t, $utf8NoBom)
               $n++
           }
-          Write-Host "已规范化 $n 个 C++ 源文件为 CRLF"
+          Write-Host "已规范化 $n 个 C++ 源文件（CRLF + 末尾换行）"
         shell: pwsh
 
       # ── 规范化 C++ 源文件行尾 ────────────────────────────────────────────
