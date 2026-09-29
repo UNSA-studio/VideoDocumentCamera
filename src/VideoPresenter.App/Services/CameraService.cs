@@ -118,7 +118,8 @@ public sealed class MediaFoundationCameraService : ICameraService
                 attributes.SetGUID(ref srcTypeKey, ref vidcapValue);
 
                 int hr = MFEnumDeviceSources(attributes, out activates, out uint count);
-                if (hr < 0) throw new InvalidOperationException($"MFEnumDeviceSources 失败 0x{hr:X8}");
+                if (hr < 0 || activates is null)
+                    throw new InvalidOperationException($"MFEnumDeviceSources 失败 0x{hr:X8}");
 
                 for (int i = 0; i < count; i++)
                 {
@@ -407,9 +408,8 @@ public sealed class MediaFoundationCameraService : ICameraService
         try
         {
             // 返回副本：采集线程会持续改写 _bitmap，直接返回会导致拍照结果撕裂。
-            // 注意 SoftwareBitmap.Copy() 是【无参】的（同格式副本）；
-            // 需要换格式请用静态方法 SoftwareBitmap.Convert(source, format, alpha)。
-            return bitmap.Copy();
+            // 注意 SoftwareBitmap.Copy 是【静态方法】：Copy(source)。
+            return SoftwareBitmap.Copy(bitmap);
         }
         catch (Exception ex)
         {
