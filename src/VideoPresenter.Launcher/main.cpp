@@ -133,8 +133,8 @@ void DrawSplash(HDC dc, const RECT& rc)
     const int radius  = barH;
 
     HBRUSH trackBrush = CreateSolidBrush(track);
-    HGDIOBJ oldBrush  = SelectObject(dc, trackBrush);
-    HGDIOBJ oldPen    = SelectObject(dc, GetStockObject(NULL_PEN));
+    SelectObject(dc, trackBrush);
+    HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
     RoundRect(dc, pad, barY, pad + totalW, barY + barH, radius, radius);
     SelectObject(dc, oldPen);
     DeleteObject(trackBrush);

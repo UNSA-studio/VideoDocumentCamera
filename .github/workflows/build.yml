@@ -8,15 +8,15 @@
 #      · Inno Setup (ISCC.exe) / signtool 均为原生 Windows 程序
 #    因此把打包搬到 GitHub 的 windows-latest runner 上，本地无需安装任何工具链。
 #
+#  ★ 为什么把构建拆成 4 个 step：
+#    GitHub 的失败注解（annotations）只会捕获 MSBuild / 编译器的结构化输出，
+#    ISCC.exe 之类的普通控制台程序报错只会写 stdout，不会变成注解。
+#    拆成独立 step 后，"哪一步红了"本身就是最精确的定位信息。
+#
 #  产物：
 #    · 视频展台-1.0.0-x64.msi          （WiX v4 安装包）
 #    · 视频展台-1.0.0-x64-setup.exe    （Inno Setup 安装包）
 #    · 视频展台-便携版（dist/app 整目录，可直接拷贝运行）
-#
-#  用法：
-#    · 推到 main / master 分支      → 自动构建
-#    · 打 tag（如 v1.0.0）           → 自动构建，可用作 Release 附件
-#    · 手动：Actions 页面 → Run workflow
 # ============================================================================
 
 name: 构建视频展台
@@ -29,9 +29,14 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write      # 打 tag 时创建 Release
+
 env:
   DOTNET_VERSION: '8.0.x'
   CONFIGURATION: 'Release'
+  # pwsh 调用 build.ps1 的统一前缀
+  BUILD_CMD: pwsh -ExecutionPolicy Bypass -File ./build/build.ps1 -SkipIcon
 
 jobs:
   build-windows:
@@ -39,37 +44,68 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # ── 1. 取源码 ──────────────────────────────────────────────────────
+      # ══════════ 准备 ══════════
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # ── 2. .NET 8 SDK ──────────────────────────────────────────────────
       - name: 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      # ── 3. MSBuild（含「使用 C++ 的桌面开发」工作负载与 Windows SDK）──
-      #      windows-latest 已预装 VS2022，此步骤只是确保 msbuild 在 PATH 上
-      - name: 配置 MSBuild
+      - name: 配置 MSBuild（VS2022）
         uses: microsoft/setup-msbuild@v2
 
-      # ── 4. WiX v4（生成 MSI）───────────────────────────────────────────
       - name: 安装 WiX v4
         run: dotnet tool install --global wix
 
-      # ── 5. Inno Setup 6（生成 EXE 安装包）──────────────────────────────
       - name: 安装 Inno Setup 6
         run: choco install innosetup --no-progress -y
         shell: pwsh
 
-      # ── 6. 构建 ────────────────────────────────────────────────────────
-      #      -SkipIcon：图标已入库，无需重新生成（避免覆盖设计稿）
-      - name: 构建（启动器 + 主程序 + 双安装包）
-        run: pwsh -ExecutionPolicy Bypass -File ./build/build.ps1 -Configuration ${{ env.CONFIGURATION }} -Package All -SkipIcon
+      - name: 打印环境信息
+        run: |
+          Write-Host "--- dotnet ---"
+          dotnet --version
+          Write-Host "--- msbuild ---"
+          msbuild -version
+          Write-Host "--- ISCC ---"
+          Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" | Select-Object FullName
         shell: pwsh
 
-      # ── 7. 收集产物 ────────────────────────────────────────────────────
+      # ══════════ ① 启动器（C++）══════════
+      - name: ① 编译启动器（原生 Win32 C++）
+        run: ${{ env.BUILD_CMD }} -Configuration ${{ env.CONFIGURATION }} -Stage Launcher
+        shell: pwsh
+
+      # ══════════ ② 主程序（WinUI 3）══════════
+      - name: ② 发布主程序（WinUI 3 自包含）
+        run: ${{ env.BUILD_CMD }} -Configuration ${{ env.CONFIGURATION }} -Stage App
+        shell: pwsh
+
+      # ══════════ ③ MSI ══════════
+      - name: ③ 打包 MSI（WiX v4）
+        run: ${{ env.BUILD_CMD }} -Stage Msi
+        shell: pwsh
+
+      # ══════════ ④ EXE ══════════
+      - name: ④ 打包 EXE（Inno Setup 6）
+        run: ${{ env.BUILD_CMD }} -Stage Exe
+        shell: pwsh
+
+      # ══════════ 诊断（失败时）══════════
+      - name: 诊断信息（仅在失败时）
+        if: failure()
+        run: |
+          Write-Host "--- 工作目录树 ---"
+          if (Test-Path dist) { Get-ChildItem dist -Recurse -File | Select-Object -First 40 FullName, Length }
+          else { Write-Host "(dist 不存在，构建在更早阶段失败)" }
+          Write-Host "--- build/out ---"
+          if (Test-Path build\out) { Get-ChildItem build\out -Recurse -File | Select-Object -First 40 FullName }
+          else { Write-Host "(build/out 不存在)" }
+        shell: pwsh
+
+      # ══════════ 收集产物 ══════════
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
@@ -88,7 +124,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ── 8. 打 tag 时顺带挂到 Release ───────────────────────────────────
+      # ══════════ 打 tag 时挂到 Release ══════════
       - name: 发布 Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

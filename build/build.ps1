@@ -1,28 +1,33 @@
 <#
 .SYNOPSIS
-    「视频展台」一键构建 / 出包脚本。
+    「视频展台」构建 / 出包脚本（分阶段）。
 
 .DESCRIPTION
     产出物（dist/）：
         app/                                便携目录（可直接拷走运行）
             VideoPresenter.Launcher.exe     ← 启动器（原生，1 秒内出界面）
-            VideoPresenter.exe             ← 主程序（self-contained）
-            …运行时依赖
+            VideoPresenter.exe             ← 主程序（WinUI 3，自包含）
+            …（Windows App SDK 运行时）
         视频展台-1.0.0-x64.msi              ← MSI 安装包（WiX v4）
         视频展台-1.0.0-x64-setup.exe        ← EXE 安装包（Inno Setup 6）
+
+.PARAMETER Stage
+    分阶段执行。CI 中拆成多个 step 可以精确定位失败点：
+        All      完整流程（默认）
+        Launcher 仅编译 C++ 启动器
+        App      仅发布 WinUI 3 主程序
+        Msi      仅打包 MSI（WiX v4）
+        Exe      仅打包 EXE（Inno Setup 6）
 
 .PARAMETER Configuration
     Debug 或 Release，默认 Release。
 
-.PARAMETER Package
-    None / Msi / Exe / All，默认 All。
-
 .PARAMETER Sign
-    提供 PFX 路径后会对所有产物做数字签名（主体：UNSA Studio）。
+    提供 PFX 路径后对产物做数字签名（主体：UNSA Studio）。
 
 .EXAMPLE
-    ./build.ps1 -Configuration Release -Package All
-    ./build.ps1 -Package Exe -Sign ./certs/unsa-studio.pfx
+    ./build.ps1 -Configuration Release
+    ./build.ps1 -Stage App
 
 .NOTES
     开发商：UNSA Studio
@@ -33,8 +38,8 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
 
-    [ValidateSet('None', 'Msi', 'Exe', 'All')]
-    [string]$Package = 'All',
+    [ValidateSet('All', 'Launcher', 'App', 'Msi', 'Exe')]
+    [string]$Stage = 'All',
 
     [string]$Sign = '',
     [string]$SignPassword = '',
@@ -47,26 +52,34 @@ $ErrorActionPreference = 'Stop'
 
 # ─────────────────────────── 路径 ───────────────────────────
 
-$root       = Split-Path -Parent $PSScriptRoot
-$srcDir     = Join-Path $root 'src'
-$distDir    = Join-Path $root 'dist'
-$appOutDir  = Join-Path $distDir 'app'
-$buildOut   = Join-Path $root 'build\out'
+$root         = Split-Path -Parent $PSScriptRoot
+$srcDir       = Join-Path $root 'src'
+$distDir      = Join-Path $root 'dist'
+$appOutDir    = Join-Path $distDir 'app'
+$buildOut     = Join-Path $root 'build\out'
 
-$appProj    = Join-Path $srcDir 'VideoPresenter.App\VideoPresenter.App.csproj'
+$appProj      = Join-Path $srcDir 'VideoPresenter.App\VideoPresenter.App.csproj'
 $launcherVcxp = Join-Path $srcDir 'VideoPresenter.Launcher\Launcher.vcxproj'
-$msiProj    = Join-Path $root 'installer\wix\VideoPresenter.Msi.wixproj'
-$issFile    = Join-Path $root 'installer\exe\setup.iss'
-$iconScript = Join-Path $PSScriptRoot 'tools\make-icon.ps1'
+$msiProj      = Join-Path $root 'installer\wix\VideoPresenter.Msi.wixproj'
+$issFile      = Join-Path $root 'installer\exe\setup.iss'
+$iconScript   = Join-Path $PSScriptRoot 'tools\make-icon.ps1'
 
-$version    = '1.0.0'
-$productName = '视频展台'
+$version = '1.0.0'
+
+# 本阶段需要做哪些事
+$doIcon     = $Stage -eq 'All'
+$doLauncher = $Stage -in @('All', 'Launcher')
+$doApp      = $Stage -in @('All', 'App')
+$doMsi      = $Stage -in @('All', 'Msi')
+$doExe      = $Stage -in @('All', 'Exe')
+
+# ─────────────────────────── 工具函数 ───────────────────────────
 
 function Write-Step([string]$text) {
     Write-Host ''
-    Write-Host ("═" * 72) -ForegroundColor DarkCyan
-    Write-Host ("  $text") -ForegroundColor Cyan
-    Write-Host ("═" * 72) -ForegroundColor DarkCyan
+    Write-Host ('=' * 72)
+    Write-Host ('  ' + $text)
+    Write-Host ('=' * 72)
 }
 
 function Assert-Command([string]$name, [string]$hint) {
@@ -75,154 +88,208 @@ function Assert-Command([string]$name, [string]$hint) {
     }
 }
 
-# ─────────────────────── 0. 环境自检 ───────────────────────
+function Find-MSBuild {
+    $candidate = $null
 
-Write-Step '0/6  环境自检'
-Assert-Command 'dotnet' '请安装 .NET 8 SDK（https://dot.net）'
-Write-Host ("  dotnet : {0}" -f (dotnet --version))
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (Test-Path $vswhere) {
+        $candidate = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild `
+            -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+    }
 
-$msbuild = $null
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-if (Test-Path $vswhere) {
-    $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' |
-               Select-Object -First 1
-}
-if (-not $msbuild) {
-    $msbuild = (Get-Command msbuild -ErrorAction SilentlyContinue).Source
-}
-if (-not $msbuild) {
-    Write-Warning '  未找到 MSBuild：将跳过启动器（C++）编译，直接复用已有产物。'
-    Write-Warning '  需安装 Visual Studio 2022 并勾选「使用 C++ 的桌面开发」工作负载。'
-}
-else {
-    Write-Host ("  msbuild: {0}" -f $msbuild)
+    if (-not $candidate) {
+        $cmd = Get-Command msbuild -ErrorAction SilentlyContinue
+        if ($cmd) { $candidate = $cmd.Source }
+    }
+
+    return $candidate
 }
 
-# ─────────────────────── 1. 生成图标 ───────────────────────
+Write-Host ''
+Write-Host "视频展台 · 构建 (Stage=$Stage, Configuration=$Configuration)" -ForegroundColor Cyan
+Write-Host "  工程根目录 : $root"
+Write-Host "  输出目录   : $distDir"
 
-Write-Step '1/6  生成应用程序图标'
-if ($SkipIcon) {
-    Write-Host '  已按参数跳过'
-}
-else {
+# ═══════════════════════ 阶段 0：图标 ═══════════════════════
+
+if ($doIcon -and -not $SkipIcon) {
+    Write-Step '生成应用程序图标'
     & $iconScript
 }
+elseif ($SkipIcon -or $doIcon) {
+    Write-Host ''
+    Write-Host '  图标：沿用已入库的 Assets 文件' -ForegroundColor DarkGray
+}
 
-# ─────────────────────── 2. 编译启动器 ───────────────────────
+# ═══════════════════════ 阶段 1：编译启动器 ═══════════════════════
 
-Write-Step '2/6  编译启动器（原生 Win32，静态 CRT）'
-if ($msbuild) {
+if ($doLauncher) {
+    Write-Step '① 编译启动器（原生 Win32 C++）'
+
+    $msbuild = Find-MSBuild
+    if (-not $msbuild) {
+        throw '未找到 MSBuild。请安装 Visual Studio（勾选「使用 C++ 的桌面开发」工作负载）。'
+    }
+    Write-Host "  MSBuild: $msbuild"
+    Write-Host "  项目   : $launcherVcxp"
+    Write-Host ''
+
     & $msbuild $launcherVcxp `
         /p:Configuration=$Configuration `
         /p:Platform=x64 `
         /m /nologo /v:minimal
 
-    if ($LASTEXITCODE -ne 0) { throw '启动器编译失败。' }
-    Write-Host '  启动器编译完成。'
-}
-else {
-    Write-Host '  跳过（未检测到 MSBuild）。'
-}
+    if ($LASTEXITCODE -ne 0) {
+        throw "启动器编译失败（MSBuild exit code = $LASTEXITCODE）。"
+    }
 
-# ─────────────────────── 3. 发布主程序 ───────────────────────
-
-Write-Step '3/6  发布主程序（self-contained + ReadyToRun）'
-if (Test-Path $appOutDir) { Remove-Item $appOutDir -Recurse -Force }
-New-Item -ItemType Directory -Path $appOutDir -Force | Out-Null
-
-dotnet publish $appProj `
-    -c $Configuration `
-    -r win-x64 `
-    --self-contained true `
-    -o $appOutDir `
-    -p:Platform=x64 `
-    -p:Version=$version `
-    -p:PublishReadyToRun=true `
-    -p:WindowsAppSDKSelfContained=true `
-    -p:DebugType=none `
-    --nologo
-
-if ($LASTEXITCODE -ne 0) { throw '主程序发布失败。' }
-Write-Host '  主程序发布完成。'
-
-# 把启动器放进同一个目录（启动器按"同目录下的 VideoPresenter.exe"定位主程序）
-$launcherBuilt = Join-Path $buildOut "x64\$Configuration\VideoPresenter.Launcher.exe"
-if (Test-Path $launcherBuilt) {
-    Copy-Item $launcherBuilt $appOutDir -Force
-    Write-Host '  启动器已复制到发布目录。'
-}
-elseif (-not (Test-Path (Join-Path $appOutDir 'VideoPresenter.Launcher.exe'))) {
-    Write-Warning '  发布目录中没有启动器！桌面快捷方式将无法工作。'
-}
-
-Write-Host ''
-Write-Host '  ── 发布目录体积统计 ──'
-$size = (Get-ChildItem $appOutDir -Recurse -File | Measure-Object -Property Length -Sum).Sum
-Write-Host ("  共 {0} 个文件，{1:N1} MB" -f `
-    (Get-ChildItem $appOutDir -Recurse -File).Count, ($size / 1MB))
-
-# ─────────────────────── 4. 数字签名 ───────────────────────
-
-Write-Step '4/6  数字签名（主体：UNSA Studio）'
-if ([string]::IsNullOrWhiteSpace($Sign)) {
-    Write-Host '  未提供 -Sign 参数，跳过。'
-    Write-Host '  正式发布时请执行：'
-    Write-Host '    ./build.ps1 -Sign .\certs\unsa-studio.pfx -SignPassword ***'
-}
-else {
-    Assert-Command 'signtool' '请安装 Windows SDK（含 SignTool）。'
-    $targets = Get-ChildItem $appOutDir -Filter '*.exe' -File
-    foreach ($t in $targets) {
-        & signtool sign /fd SHA256 /f $Sign /p $SignPassword `
-            /tr http://timestamp.digicert.com /td SHA256 $t.FullName
-        if ($LASTEXITCODE -ne 0) { throw "签名失败：$($t.Name)" }
-        Write-Host ("  已签名 {0}" -f $t.Name)
+    $launcherExe = Join-Path $buildOut "x64\$Configuration\VideoPresenter.Launcher.exe"
+    if (Test-Path $launcherExe) {
+        $size = [Math]::Round((Get-Item $launcherExe).Length / 1KB, 1)
+        Write-Host "  启动器编译完成：$launcherExe （$size KB）" -ForegroundColor Green
+    }
+    else {
+        throw "编译成功但未找到产物：$launcherExe"
     }
 }
 
-# ─────────────────────── 5. 打包 MSI ───────────────────────
+# ═══════════════════════ 阶段 2：发布主程序 ═══════════════════════
 
-Write-Step '5/6  打包 MSI（WiX v4）'
-if ($Package -in @('Msi', 'All')) {
-    Assert-Command 'dotnet' 'WiX v4 通过 dotnet tool 安装：dotnet tool install --global wix'
-    dotnet build $msiProj -c $Configuration -p:Platform=x64 `
-        -p:VpPublishDir="$appOutDir\" -p:VpVersion="$version" --nologo
-    if ($LASTEXITCODE -ne 0) { throw 'MSI 打包失败。' }
-    Write-Host '  MSI 打包完成。'
+if ($doApp) {
+    Write-Step '② 发布主程序（WinUI 3 / 自包含 / ReadyToRun）'
+
+    Assert-Command 'dotnet' '请安装 .NET 8 SDK（https://dot.net）'
+
+    if (Test-Path $appOutDir) { Remove-Item $appOutDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $appOutDir -Force | Out-Null
+    Write-Host "  输出：$appOutDir"
+    Write-Host ''
+
+    dotnet publish $appProj `
+        -c $Configuration `
+        -r win-x64 `
+        --self-contained true `
+        -o $appOutDir `
+        -p:Platform=x64 `
+        -p:Version=$version `
+        -p:PublishReadyToRun=true `
+        -p:WindowsPackageType=None `
+        -p:WindowsAppSDKSelfContained=true `
+        -p:DebugType=none `
+        --nologo
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "主程序发布失败（dotnet exit code = $LASTEXITCODE）。"
+    }
+
+    # 启动器必须与主程序同目录（启动器按"同目录下的 VideoPresenter.exe"定位主程序）
+    $launcherBuilt = Join-Path $buildOut "x64\$Configuration\VideoPresenter.Launcher.exe"
+    if (Test-Path $launcherBuilt) {
+        Copy-Item $launcherBuilt $appOutDir -Force
+        Write-Host '  启动器已复制到发布目录。' -ForegroundColor Green
+    }
+    elseif (Test-Path (Join-Path $appOutDir 'VideoPresenter.Launcher.exe')) {
+        Write-Host '  启动器已在发布目录中（来自上一次构建）。'
+    }
+    else {
+        Write-Warning '  发布目录中没有启动器！桌面快捷方式将无法工作。请先执行 -Stage Launcher。'
+    }
+
+    $files = Get-ChildItem $appOutDir -Recurse -File
+    $sizeMb = [Math]::Round(($files | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+    Write-Host ''
+    Write-Host "  发布完成：$($files.Count) 个文件，$sizeMb MB" -ForegroundColor Green
 }
-else {
-    Write-Host '  已按参数跳过。'
+
+# ═══════════════════════ 阶段 3：数字签名 ═══════════════════════
+
+if ($doApp -and -not [string]::IsNullOrWhiteSpace($Sign)) {
+    Write-Step '③ 数字签名（主体：UNSA Studio）'
+    Assert-Command 'signtool' '请安装 Windows SDK（含 SignTool）。'
+
+    foreach ($t in (Get-ChildItem $appOutDir -Filter '*.exe' -File)) {
+        & signtool sign /fd SHA256 /f $Sign /p $SignPassword `
+            /tr http://timestamp.digicert.com /td SHA256 $t.FullName
+        if ($LASTEXITCODE -ne 0) { throw "签名失败：$($t.Name)" }
+        Write-Host "  已签名 $($t.Name)"
+    }
 }
 
-# ─────────────────────── 6. 打包 EXE ───────────────────────
+# ═══════════════════════ 阶段 4：打包 MSI ═══════════════════════
 
-Write-Step '6/6  打包 EXE（Inno Setup 6）'
-if ($Package -in @('Exe', 'All')) {
+if ($doMsi) {
+    Write-Step '④ 打包 MSI（WiX v4）'
+
+    if (-not (Test-Path $appOutDir)) {
+        throw "发布目录不存在：$appOutDir。请先执行 -Stage App。"
+    }
+
+    Assert-Command 'dotnet' 'WiX v4 通过 dotnet 构建，请安装 .NET SDK。'
+
+    # 末尾不带反斜杠，避免 PowerShell / MSBuild 的引号歧义
+    $publishDir = $appOutDir.TrimEnd('\') + '\'
+
+    Write-Host "  工程        : $msiProj"
+    Write-Host "  VpPublishDir: $publishDir"
+    Write-Host "  VpVersion   : $version"
+    Write-Host ''
+
+    dotnet build $msiProj `
+        -c $Configuration `
+        -p:Platform=x64 `
+        -p:VpPublishDir="$publishDir" `
+        -p:VpVersion=$version `
+        --nologo
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "MSI 打包失败（dotnet exit code = $LASTEXITCODE）。"
+    }
+    Write-Host '  MSI 打包完成。' -ForegroundColor Green
+}
+
+# ═══════════════════════ 阶段 5：打包 EXE ═══════════════════════
+
+if ($doExe) {
+    Write-Step '⑤ 打包 EXE（Inno Setup 6）'
+
+    if (-not (Test-Path $appOutDir)) {
+        throw "发布目录不存在：$appOutDir。请先执行 -Stage App。"
+    }
+
     $iscc = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
         (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     if (-not $iscc) {
-        Write-Warning '  未找到 Inno Setup 6，跳过 EXE 打包。'
-        Write-Warning '  下载：https://jrsoftware.org/isdl.php'
+        throw '未找到 Inno Setup 6（ISCC.exe）。下载：https://jrsoftware.org/isdl.php'
     }
-    else {
-        & $iscc "/DMyAppVersion=$version" $issFile
-        if ($LASTEXITCODE -ne 0) { throw 'EXE 打包失败。' }
-        Write-Host '  EXE 打包完成。'
+
+    Write-Host "  ISCC: $iscc"
+    Write-Host "  脚本: $issFile"
+    Write-Host ''
+
+    & $iscc "/DMyAppVersion=$version" $issFile
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "EXE 打包失败（ISCC exit code = $LASTEXITCODE）。"
     }
+    Write-Host '  EXE 打包完成。' -ForegroundColor Green
+}
+
+# ═══════════════════════ 完成 ═══════════════════════
+
+if ($Stage -eq 'All') {
+    Write-Step '构建完成'
+    if (Test-Path $distDir) {
+        Get-ChildItem $distDir -File | ForEach-Object {
+            Write-Host ('  {0,-42} {1,10:N1} MB' -f $_.Name, ($_.Length / 1MB)) -ForegroundColor Green
+        }
+    }
+    Write-Host ''
+    Write-Host '  提示：请先双击 VideoPresenter.Launcher.exe 验证「1 秒启动」体验。'
 }
 else {
-    Write-Host '  已按参数跳过。'
+    Write-Host ''
+    Write-Host "  阶段 $Stage 完成。" -ForegroundColor Green
 }
-
-# ─────────────────────── 完成 ───────────────────────
-
-Write-Step '构建完成'
-Get-ChildItem $distDir -File | ForEach-Object {
-    Write-Host ("  {0,-40} {1,10:N1} MB" -f $_.Name, ($_.Length / 1MB)) -ForegroundColor Green
-}
-Write-Host ''
-Write-Host ("  产物目录：{0}" -f $distDir)
-Write-Host '  提示：请先双击 VideoPresenter.Launcher.exe 验证「1 秒启动」体验。'
