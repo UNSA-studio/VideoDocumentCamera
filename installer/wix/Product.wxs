@@ -54,7 +54,11 @@
         <!-- 程序与控制面板图标 -->
         <Icon Id="VpAppIcon" SourceFile="$(VpIconPath)"/>
         <Property Id="ARPPRODUCTICON" Value="VpAppIcon"/>
-        <Property Id="ARPNOMODIFY" Value="1"/>
+        <!--
+            注意：不要在这里定义 ARPNOMODIFY —— WixUI_InstallDir 的 wixlib 里
+            已经声明了它，重复定义会报：
+                error WIX0091: Duplicate symbol 'Property:ARPNOMODIFY' found
+        -->
         <Property Id="ARPHELPLINK" Value="https://www.unsa.studio/"/>
         <Property Id="ARPCOMMENTS" Value="视频展台 —— 实物展台 / 高拍仪高清采集与教学批注"/>
 
