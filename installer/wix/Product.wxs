@@ -66,7 +66,18 @@
         <!-- ══════════ 目录结构 ══════════ -->
         <StandardDirectory Id="ProgramFiles64Folder">
             <Directory Id="MANUFACTURERFOLDER" Name="UNSA Studio">
-                <Directory Id="INSTALLFOLDER" Name="视频展台"/>
+                <!--
+                    安装目录用【英文】而不是「视频展台」。
+
+                    原因是踩过的坑：MSI 在 8.3 短文件名（SFN）机制下会把中文目录名
+                    折叠成 '????'，此前的 ICE30 报错里就出现过
+                        [ProgramFiles64Folder]\i8gueiie\????\
+                    虽然当时没有致命，但纯 ASCII 路径可以彻底避开
+                    短文件名、命令行转义、区域设置这一整类问题。
+
+                    用户可见的显示名仍然是中文（快捷方式、控制面板里都是「视频展台」）。
+                -->
+                <Directory Id="INSTALLFOLDER" Name="VideoDocumentCamera"/>
             </Directory>
         </StandardDirectory>
 
