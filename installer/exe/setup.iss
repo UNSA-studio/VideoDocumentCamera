@@ -52,9 +52,11 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 
-; 许可协议：Inno 原生支持 .txt，直接读取仓库里的 EULA.txt（无需转换）。
-; 安装向导会显示协议全文，用户必须勾选「我接受」才能继续。
-LicenseFile=..\EULA.txt
+; 许可协议：使用 build.ps1 从 EULA.txt 转换出的 RTF。
+;  为什么不用 .txt：Inno 读取无 BOM 的文本文件时按【系统 ANSI 代码页】解析，
+;  而 CI runner 是英文 Windows（代码页 1252）—— 中文会变乱码。
+;  RTF 里中文以 \u<码点>? 转义并声明 \ansicpg936，任何系统都能正确显示。
+LicenseFile=..\EULA.rtf
 
 DefaultDirName={autopf}\UNSA Studio\{#MyAppName}
 DefaultGroupName=UNSA Studio

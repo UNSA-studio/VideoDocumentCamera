@@ -565,6 +565,15 @@ if ($doExe) {
         throw "发布目录不存在：$appOutDir。请先执行 -Stage App。"
     }
 
+    # 许可协议 RTF：MSI 阶段已经生成，这里再确保一次（幂等），
+    # 以便 -Stage Exe 单独执行时也能正常工作。
+    $installerDir = Split-Path (Split-Path $issFile)   # installer/exe → installer
+    $eulaTxt = Join-Path $installerDir 'EULA.txt'
+    $eulaRtf = Join-Path $installerDir 'EULA.rtf'
+    if (ConvertTo-Rtf -TextPath $eulaTxt -RtfPath $eulaRtf) {
+        Write-Host "  已生成许可协议：$eulaRtf"
+    }
+
     $iscc = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
         (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')

@@ -27,7 +27,8 @@
              Scope="perMachine"
              Compressed="yes"
              InstallerVersion="500"
-             Language="2052">
+             Language="2052"
+             Codepage="936">
 
         <SummaryInformation
             Description="视频展台 安装程序（UNSA Studio）"
