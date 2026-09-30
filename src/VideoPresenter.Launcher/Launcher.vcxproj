@@ -73,6 +73,16 @@
       <!-- 缓冲区安全检查仍保留，安全与性能兼顾 -->
       <BufferSecurityCheck>true</BufferSecurityCheck>
       <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!--
+        ★ 必须显式声明源文件与执行字符集为 UTF-8。
+
+        本文件与 main.cpp 里含中文（「视频展台」「应用程序正在启动…」）。
+        若不指定，MSVC 会按【系统 ANSI 代码页】解析源文件：
+          · 中文 Windows（936）→ 碰巧正确
+          · 英文 Windows（1252）→ UTF-8 的中文字节被硬解成乱七八糟的字符
+        CI 的 runner 正好是英文系统，于是启动器界面显示成一串"阿拉伯文"。
+      -->
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
 
     <ResourceCompile>

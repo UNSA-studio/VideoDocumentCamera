@@ -34,6 +34,19 @@
     mc:Ignorable="d">
 
     <Grid x:Name="RootGrid" Background="Transparent">
+
+        <!--
+            键盘快捷键（窗口有焦点时生效）：
+              Esc / F11 —— 切换全屏
+            全局热键（窗口无焦点也生效，注册在 MainWindow.xaml.cs）：
+              Ctrl+Alt+P —— 拍照
+              Ctrl+Alt+F —— 切换全屏
+        -->
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="Escape" Invoked="FullScreenAccelerator_Invoked"/>
+            <KeyboardAccelerator Key="F11" Invoked="FullScreenAccelerator_Invoked"/>
+        </Grid.KeyboardAccelerators>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="48"/>    <!-- 标题栏（可拖拽） -->
             <RowDefinition Height="Auto"/>  <!-- 命令栏 -->

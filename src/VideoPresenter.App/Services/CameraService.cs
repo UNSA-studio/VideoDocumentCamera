@@ -71,6 +71,18 @@ public sealed class MediaFoundationCameraService : ICameraService
     private readonly object _gate = new();
     private readonly List<CameraDevice> _devices = new();
 
+    /// <summary>
+    /// Media Foundation 是否可用。
+    /// <para>
+    /// Windows N / KN 版（欧洲版）以及部分精简版系统【不包含 Media Foundation】，
+    /// 此时相机功能整体降级为"不可用"，但应用本身必须照常运行。
+    /// </para>
+    /// </summary>
+    private readonly bool _mfAvailable;
+
+    /// <summary>Media Foundation 是否可用（供界面提示用）。</summary>
+    public bool IsAvailable => _mfAvailable;
+
     private IMFSourceReader? _reader;
     private Thread? _readThread;
     private volatile bool _running;
@@ -92,15 +104,46 @@ public sealed class MediaFoundationCameraService : ICameraService
 
     public MediaFoundationCameraService()
     {
-        int hr = MFStartup(MF_VERSION, 0);
-        if (hr < 0) throw new InvalidOperationException($"Media Foundation 初始化失败，HRESULT=0x{hr:X8}");
-        Debug.WriteLine("[VP-MF] Media Foundation 已启动");
+        // ⚠ 这里【绝对不能抛异常】。
+        //
+        //  本对象是在 MainWindow 的构造函数里创建的 —— 一旦抛异常，
+        //  整个主程序会在窗口创建之前就崩掉，用户看到的就是"双击没反应"。
+        //
+        //  Windows N / KN 版（欧洲版）与部分精简版系统不包含 Media Foundation，
+        //  MFStartup 会失败；此时应当降级为"相机不可用"，其余功能照常。
+        try
+        {
+            int hr = MFStartup(MF_VERSION, 0);
+            _mfAvailable = hr >= 0;
+
+            if (_mfAvailable)
+            {
+                Debug.WriteLine("[VP-MF] Media Foundation 已启动");
+            }
+            else
+            {
+                Debug.WriteLine($"[VP-MF] Media Foundation 不可用，HRESULT=0x{hr:X8}（相机功能已禁用）");
+            }
+        }
+        catch (Exception ex)
+        {
+            // 例如 mfplat.dll 加载失败（Windows N 版根本没这个组件）
+            _mfAvailable = false;
+            Debug.WriteLine($"[VP-MF] Media Foundation 初始化异常：{ex.Message}（相机功能已禁用）");
+        }
     }
 
     // ══════════════════════════ 设备枚举 ══════════════════════════
 
     public void RefreshDevices()
     {
+        if (!_mfAvailable)
+        {
+            lock (_gate) { _devices.Clear(); }
+            StatusChanged?.Invoke(this, "本系统未提供 Media Foundation 组件，无法枚举视频设备");
+            return;
+        }
+
         lock (_gate)
         {
             _devices.Clear();
@@ -168,6 +211,11 @@ public sealed class MediaFoundationCameraService : ICameraService
 
     public bool Start(CameraDevice device)
     {
+        if (!_mfAvailable)
+        {
+            return Fail("本系统未提供 Media Foundation 组件，无法打开视频设备");
+        }
+
         Stop();
 
         lock (_gate)

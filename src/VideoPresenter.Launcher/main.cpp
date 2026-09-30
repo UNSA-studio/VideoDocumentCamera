@@ -19,6 +19,7 @@
 #include <dwmapi.h>
 #include <cstdio>
 #include <cwchar>
+#include <cmath>
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "user32.lib")
@@ -55,6 +56,7 @@ struct SplashState
     int          phase     = 0;        // 0=启动中, 1=初始化界面, 2=失败
     wchar_t      status[160] = L"应用程序正在启动…";
     float        marquee   = 0.0f;
+    DWORD        animTick  = 0;        // 动画时钟（毫秒），驱动走马灯
     DWORD        startTick = 0;
 
     HFONT fontTitle = nullptr;
@@ -153,10 +155,15 @@ void DrawSplash(HDC dc, const RECT& rc)
     }
     else
     {
-        // 三角波走马灯：0 → 1 → 0，避免滑块"跳回起点"的突兀感
-        float t = g.marquee;
-        float tri = (t < 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
-        int x = pad + (int)(tri * range);
+        // 走马灯：用【时间】驱动，而不是帧计数。
+        //  再配上余弦缓动（0 → 1 → 0，两端平滑减速），
+        //  观感接近 WinUI 的 ProgressBar（不确定态/Indeterminate）。
+        //  此前的线性三角波在两端速度突变，看起来像"弹跳"，非常鬼畜。
+        const DWORD periodMs = 2600;   // 一个完整来回约 2.6 秒
+        double phase = (double)(g.animTick % periodMs) / periodMs;
+        double eased = 0.5 - 0.5 * cos(phase * 6.283185307179586);
+
+        int x = pad + (int)(eased * range);
         RoundRect(dc, x, barY, x + slideW, barY + barH, radius, radius);
     }
 
@@ -445,12 +452,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int)
             }
         }
 
-        // 走马灯动画
-        if (g.phase != 2)
-        {
-            g.marquee += 0.045f;
-            if (g.marquee > 1.0f) g.marquee = 0.0f;
-        }
+        // 走马灯动画：纯时间驱动，与刷新率 / 帧数无关
+        g.animTick = elapsed;
 
         if (g.hwnd) InvalidateRect(g.hwnd, nullptr, FALSE);
 

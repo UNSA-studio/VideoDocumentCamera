@@ -50,15 +50,41 @@ public partial class App : Application
         }
 
         // ── ④ 建主窗口 ─────────────────────────────────────────────────────
-        _window = new MainWindow();
-        _window.Closed += (_, _) =>
+        //  任何异常都必须让用户【看得见】，而不是静默闪退。
+        //  在窗口创建出来之前，WinUI 的对话框一个都用不了，
+        //  所以这里用 Win32 的 MessageBox 兜底。
+        try
         {
-            BootSignal.Instance.Dispose();
-            _singleInstanceMutex?.Dispose();
-        };
+            _window = new MainWindow();
+            _window.Closed += (_, _) =>
+            {
+                BootSignal.Instance.Dispose();
+                _singleInstanceMutex?.Dispose();
+            };
 
-        _window.Activate();
+            _window.Activate();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 主窗口创建失败：{ex}");
+            BootSignal.Instance.ReportFailure(ex.Message);
+            ShowFatalError(ex);
+        }
     }
+
+    private static void ShowFatalError(Exception ex)
+    {
+        string text =
+            "视频展台启动失败。\n\n" +
+            ex.GetType().Name + "：" + ex.Message + "\n\n" +
+            "技术详情（可截图反馈）：\n" +
+            (ex.StackTrace ?? "(无调用栈)");
+
+        MessageBoxW(IntPtr.Zero, text, "视频展台 · 启动失败", 0x00000010 /* MB_ICONERROR */);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
 
     /// <summary>由 MainWindow 在首帧渲染完成后回调。</summary>
     internal static void ReportWindowReady(Window window)

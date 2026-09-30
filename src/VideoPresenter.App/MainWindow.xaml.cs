@@ -3,6 +3,7 @@ using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using VideoPresenter.App.Services;
@@ -114,10 +115,13 @@ public sealed partial class MainWindow : Window
 
         UpdateThemeIndicator();
 
-        // ★ 首帧已经画完 —— 等一个低优先级回合，先让启动器收到"就绪"并自杀，
-        //   再做设备枚举这类重活。
+        // ★ 首帧已经画完 —— 等一个低优先级回合。
+        //   顺序很重要：先全屏，再报告就绪。
+        //   这样启动器的 Splash 消失时，用户看到的就是已经全屏的界面，
+        //   而不是先看到一个 1180×760 的小窗再"啪"地跳成全屏。
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
+            SetFullScreen(true);
             App.ReportWindowReady(this);
             Vm.Initialize();
         });
@@ -257,7 +261,19 @@ public sealed partial class MainWindow : Window
 
         _isFullScreen = fullScreen;
         Vm.IsFullScreen = fullScreen;
-        Vm.IsTopmost = true;   // 授课时保持最上层
+
+        // 注意：这里【不】自动置顶。
+        //   全屏 + 置顶会让用户根本无法切到其他窗口（备课时反而碍事）。
+        //   需要钉在最上层时，点工具栏的「置顶」按钮即可。
+        //   退出全屏：Esc 或 F11，或点工具栏的「全屏」按钮。
+    }
+
+    /// <summary>Esc / F11 —— 切换全屏。</summary>
+    private void FullScreenAccelerator_Invoked(KeyboardAccelerator sender,
+                                               KeyboardAcceleratorInvokedEventArgs args)
+    {
+        SetFullScreen(!_isFullScreen);
+        args.Handled = true;
     }
 
     private void CenterOnScreen()
