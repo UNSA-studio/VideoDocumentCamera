@@ -535,11 +535,22 @@ if ($doExe) {
     Write-Host ('::warning::[诊断] ISCC 退出码 = ' + $isccExit + '，输出行数 = ' + @($isccOutput).Count)
 
     if ($isccExit -ne 0) {
-        Write-Host '  ── ISCC 输出尾部 ──' -ForegroundColor Yellow
-        foreach ($line in (@($isccOutput) | Select-Object -Last 60)) {
-            $text = ($line | Out-String).TrimEnd()
-            if ($text -match '\S') { Write-Host ('::error::' + $text) }
-        }
+        # GitHub 每个 job 只保留有限条注解，因此只挑出「错误相关」的行，
+    # 避免被前面的版权横幅挤掉关键信息。
+    Write-Host '  ── ISCC 错误行 ──' -ForegroundColor Yellow
+
+    $errLines = @($isccOutput) | Where-Object {
+        $_ -match '(?i)(error|错误|cannot|invalid|failed|unable|line\s*\d+)'
+    } | Select-Object -Last 20
+
+    if (-not $errLines) {
+        $errLines = @($isccOutput) | Select-Object -Last 20
+    }
+
+    foreach ($line in $errLines) {
+        $text = ($line | Out-String).TrimEnd()
+        if ($text -match '\S') { Write-Host ('::error::' + $text) }
+    }
         throw "EXE 打包失败（ISCC exit code = $isccExit）。"
     }
     Write-Host '  EXE 打包完成。' -ForegroundColor Green

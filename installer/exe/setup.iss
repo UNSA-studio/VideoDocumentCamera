@@ -38,8 +38,12 @@
 #endif
 
 [Setup]
-; AppId 一旦发布不可更改，否则会被视为另一个产品
-AppId={{9C4B7A21-6E58-4D33-A1F7-2B8E5C90D6A4}
+; AppId 一旦发布不可更改，否则会被视为另一个产品。
+; 这里刻意【不写花括号】—— Inno 里 { 是常量起始符，{{ 表示字面 {，
+; 写成 {{GUID} 会在部分版本上产生解析歧义（实测 Inno Setup 6.7 报
+; "Parsing [Setup] section, line 42"）。AppId 允许是任意字符串，
+; 用纯 GUID 文本最稳。
+AppId=9C4B7A21-6E58-4D33-A1F7-2B8E5C90D6A4
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
