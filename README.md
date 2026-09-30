@@ -126,8 +126,8 @@ cd build
 
 ```
 dist/
-├─ 视频展台-1.0.0-x64.msi            # WiX v4 安装包
-├─ 视频展台-1.0.0-x64-setup.exe      # Inno Setup 安装包
+├─ vdc-1.0.0-x64.msi                 # WiX v4 安装包
+├─ vdc-1.0.0-x64-setup.exe           # Inno Setup 安装包
 └─ app/                              # 便携目录（可直接拷贝运行）
    ├─ VideoPresenter.Launcher.exe    # 启动器（原生，≈300 KB，1 秒启动）
    ├─ VideoPresenter.exe             # 主程序（WinUI 3，自包含）

@@ -18,7 +18,7 @@
         <!-- 许可协议 RTF：由 build.ps1 从 installer/EULA.txt 转换生成 -->
         <VpEulaRtf Condition="'$(VpEulaRtf)' == ''">$(MSBuildThisFileDirectory)..\..\installer\EULA.rtf</VpEulaRtf>
 
-        <OutputName>视频展台-$(VpVersion)-x64</OutputName>
+        <OutputName>vdc-$(VpVersion)-x64</OutputName>
         <OutputType>Package</OutputType>
         <Platform Condition="'$(Platform)' == ''">x64</Platform>
         <InstallerPlatform>x64</InstallerPlatform>

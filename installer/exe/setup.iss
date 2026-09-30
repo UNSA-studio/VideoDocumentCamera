@@ -68,7 +68,9 @@ DisableProgramGroupPage=yes
 AllowNoIcons=yes
 
 OutputDir=..\..\dist
-OutputBaseFilename=视频展台-{#MyAppVersion}-x64-setup
+; 安装包文件名用缩写 vdc（VideoDocumentCamera），短、好敲、纯 ASCII。
+; 用户可见的产品名仍然是中文「视频展台」，见 AppName。
+OutputBaseFilename=vdc-{#MyAppVersion}-x64-setup
 SetupIconFile=..\..\src\VideoPresenter.App\Assets\VideoPresenter.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}（UNSA Studio）

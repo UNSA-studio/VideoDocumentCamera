@@ -63,8 +63,8 @@ cd build
 
 ```
 dist/
-├─ 视频展台-1.0.0-x64.msi
-├─ 视频展台-1.0.0-x64-setup.exe
+├─ vdc-1.0.0-x64.msi                 # WiX v4 安装包
+├─ vdc-1.0.0-x64-setup.exe           # Inno Setup 安装包
 └─ app/                              便携目录（含两个 exe，可直接拷贝运行）
 ```
 
