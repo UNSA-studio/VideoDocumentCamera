@@ -535,15 +535,23 @@ if ($doExe) {
     Write-Host ('::warning::[诊断] ISCC 退出码 = ' + $isccExit + '，输出行数 = ' + @($isccOutput).Count)
 
     if ($isccExit -ne 0) {
-        # GitHub 每个 job 的注解数量有限（约 10 条）。
-    # 之前"只取最后 N 行"的做法会把 Inno 正常的进度输出（Parsing [Setup] section,
-    # line NN）当成错误，反而把真正的错误信息挤了出去。
-    # 现在把【完整输出】拼成【一条】注解 —— 单条注解可容纳数万字符，足够用。
-    $joined = (@($isccOutput) |
+        # 单条注解有长度上限，长消息会被截断。
+    # 这里跳过开头的版权横幅（约 10 行），并把剩余内容切成多条注解，
+    # 保证真正的错误信息一定能被看到。
+    $lines = @($isccOutput) |
         ForEach-Object { ($_ | Out-String).Trim() } |
-        Where-Object { $_ }) -join ' /// '
+        Where-Object { $_ } |
+        Select-Object -Skip 10
 
-    Write-Host ('::error::ISCC 完整输出（{0} 行）：{1}' -f @($isccOutput).Count, $joined)
+    $chunkSize = 10
+    $n = 0
+    for ($s = 0; $s -lt $lines.Count; $s += $chunkSize) {
+        $n++
+        $end = [Math]::Min($s + $chunkSize - 1, $lines.Count - 1)
+        $chunk = ($lines[$s..$end] -join ' / ')
+        Write-Host ('::error::[ISCC#{0}] {1}' -f $n, $chunk)
+        if ($n -ge 6) { break }
+    }
         throw "EXE 打包失败（ISCC exit code = $isccExit）。"
     }
     Write-Host '  EXE 打包完成。' -ForegroundColor Green
