@@ -353,39 +353,106 @@ if ($doMsi) {
     # 末尾不带反斜杠，避免 PowerShell / MSBuild 的引号歧义
     $publishDir = $appOutDir.TrimEnd('\') + '\'
 
-    # ── 生成 WiX 文件清单 ────────────────────────────────────────────────
-    #  WiX v4.0.4 的 <ComponentGroup> 不接受 <Files> 子元素，会报：
-    #      The ComponentGroup element contains an unexpected child element 'Files'
-    #  因此这里自己扫描发布目录并生成标准 fragment —— 等价于 heat.exe 的工作，
-    #  但行为完全可控，也不受 WiX 版本差异影响。
+    # ── 生成 WiX 文件清单（含完整目录树）────────────────────────────────
+    #  WiX 的 <ComponentGroup> 不接受 <Files> 收割元素，因此自己扫描生成。
+    #
+    #  这里踩过两个坑，都已修掉：
+    #   ① Guid="*" 会为「不同目录下的同名文件」算出相同 GUID
+    #       → 改为基于相对路径的确定性 GUID。
+    #   ② 必须还原完整的子目录结构，并让每个 Component 指向正确的 Directory。
+    #      否则所有文件都会被当作装在 INSTALLFOLDER 根下，
+    #      各语言目录里的同名 .mui 会撞车，报：
+    #          error WIX0204: ICE30: The target file 'xxx.mui' is installed in ...
+    #          by two different components
+    #      而且安装后目录结构会全部塌平。
     $generatedWxs = Join-Path (Split-Path $msiProj) 'GeneratedFiles.wxs'
     $allFiles = Get-ChildItem $appOutDir -Recurse -File
+    $rootLen = $appOutDir.TrimEnd('\').Length + 1
+
+    # 目录树：相对目录路径 → 生成的 Directory Id
+    $dirIds = @{}
+    $dirIds[''] = 'INSTALLFOLDER'
+    $childMap = @{}
+    $childMap[''] = New-Object System.Collections.ArrayList
+    $dirCounter = 0
+
+    $entries = @()
+
+    foreach ($f in $allFiles) {
+        $rel = $f.FullName.Substring($rootLen)
+        $parts = $rel -split '\\'
+
+        $relDir = ''
+        if ($parts.Length -gt 1) {
+            $relDir = ($parts[0..($parts.Length - 2)] -join '\')
+        }
+
+        # 建立目录链（保证父目录先注册）
+        $acc = ''
+        for ($k = 0; $k -lt ($parts.Length - 1); $k++) {
+            $parent = $acc
+            if ($acc -eq '') { $acc = $parts[$k] } else { $acc = $acc + '\' + $parts[$k] }
+
+            if (-not $dirIds.ContainsKey($acc)) {
+                $dirCounter++
+                $dirIds[$acc] = ('dir{0:D4}' -f $dirCounter)
+                if (-not $childMap.ContainsKey($parent)) {
+                    $childMap[$parent] = New-Object System.Collections.ArrayList
+                }
+                [void]$childMap[$parent].Add($acc)
+            }
+        }
+
+        $key = 'VideoPresenter/' + $rel.Replace('\', '/').ToLowerInvariant()
+        $hash = [System.Security.Cryptography.MD5]::HashData([Text.Encoding]::UTF8.GetBytes($key))
+        $guid = (New-Object Guid -ArgumentList (,$hash)).ToString('B').ToUpper()
+
+        $entries += [pscustomobject]@{
+            Src = $f.FullName
+            Dir = $dirIds[$relDir]
+            Guid = $guid
+        }
+    }
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('<?xml version="1.0" encoding="utf-8"?>')
     [void]$sb.AppendLine('<!-- 本文件由 build.ps1 自动生成（扫描 dist/app），请勿手工编辑 -->')
     [void]$sb.AppendLine('<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">')
+
+    # ① 目录树
+    function Write-WixDirectoryNodes {
+        param([string]$ParentRel, [int]$Indent)
+
+        if (-not $childMap.ContainsKey($ParentRel)) { return }
+
+        $pad = ' ' * $Indent
+        foreach ($childRel in ($childMap[$ParentRel] | Sort-Object)) {
+            $name = $childRel.Substring($childRel.LastIndexOf('\') + 1)
+            [void]$sb.AppendLine(('{0}<Directory Id="{1}" Name="{2}">' -f $pad, $dirIds[$childRel], $name))
+            Write-WixDirectoryNodes -ParentRel $childRel -Indent ($Indent + 2)
+            [void]$sb.AppendLine(('{0}</Directory>' -f $pad))
+        }
+    }
+
+    [void]$sb.AppendLine('  <Fragment>')
+    [void]$sb.AppendLine('    <DirectoryRef Id="INSTALLFOLDER">')
+    Write-WixDirectoryNodes -ParentRel '' -Indent 6
+    [void]$sb.AppendLine('    </DirectoryRef>')
+    [void]$sb.AppendLine('  </Fragment>')
+
+    # ② 文件组件
     [void]$sb.AppendLine('  <Fragment>')
     [void]$sb.AppendLine('    <ComponentGroup Id="AppFilesGroup">')
 
-    # WiX 的 Guid="*" 会为「不同目录下的同名文件」算出相同 GUID，
-    # 例如各语言目录下的 Microsoft.UI.Xaml.Phone.dll.mui，
-    # 从而报 error WIX0369（组件 GUID 重复）。
-    # 因此这里基于【相对路径】自己算确定性 GUID：
-    #   · 稳定 —— 同一文件每次构建得到同一个 GUID（升级安装才能正常识别）
-    #   · 唯一 —— 相对路径不同则 GUID 不同
     $i = 0
-    foreach ($f in $allFiles) {
+    foreach ($e in $entries) {
         $i++
-        $id = $i.ToString('D4')
+        $id = 'cmp{0:D4}' -f $i
+        $fid = 'fil{0:D4}' -f $i
+        $srcEsc = [System.Security.SecurityElement]::Escape($e.Src)
 
-        $rel = $f.FullName.Substring($appOutDir.Length).TrimStart('\').Replace('\', '/').ToLowerInvariant()
-        $hash = [System.Security.Cryptography.MD5]::HashData([Text.Encoding]::UTF8.GetBytes('VideoPresenter/' + $rel))
-        $guid = (New-Object Guid -ArgumentList (,$hash)).ToString('B').ToUpper()
-
-        $src = [System.Security.SecurityElement]::Escape($f.FullName)
-        [void]$sb.AppendLine(('      <Component Id="cmp{0}" Directory="INSTALLFOLDER" Guid="{1}">' -f $id, $guid))
-        [void]$sb.AppendLine(('        <File Id="fil{0}" Source="{1}" KeyPath="yes" />' -f $id, $src))
+        [void]$sb.AppendLine(('      <Component Id="{0}" Directory="{1}" Guid="{2}">' -f $id, $e.Dir, $e.Guid))
+        [void]$sb.AppendLine(('        <File Id="{0}" Source="{1}" KeyPath="yes" />' -f $fid, $srcEsc))
         [void]$sb.AppendLine('      </Component>')
     }
 
@@ -394,7 +461,7 @@ if ($doMsi) {
     [void]$sb.AppendLine('</Wix>')
 
     [IO.File]::WriteAllText($generatedWxs, $sb.ToString(), (New-Object System.Text.UTF8Encoding $false))
-    Write-Host "  已生成 WiX 文件清单：$generatedWxs （$i 个文件）"
+    Write-Host "  已生成 WiX 文件清单：$generatedWxs （$($entries.Count) 个文件 / $dirCounter 个目录）"
 
     Write-Host "  工程        : $msiProj"
     Write-Host "  VpPublishDir: $publishDir"
