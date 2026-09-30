@@ -88,9 +88,21 @@ VersionInfoCopyright=Copyright (C) 2026 UNSA Studio. All rights reserved.
 ;  配置后取消下面一行的注释即可自动签名。
 ;SignTool=unsa
 
+; ── 语言 ─────────────────────────────────────────────────────────────────────
+;  ⚠ Inno Setup 官方安装包【不包含】简体中文语言文件（ChineseSimplified.isl
+;    由社区维护，不随官方发行版附带）。直接引用会报：
+;        Error on line NN: Couldn't open include file
+;        "...\Inno Setup 6\Languages\ChineseSimplified.isl"
+;    因此这里用 ISPP 的 FileExists 条件判断：
+;      · 文件存在 → 提供中文向导
+;      · 文件缺失 → 退回英文向导（不报错）
+;    CI 会先尝试下载该文件（见 .github/workflows/build.yml 的「准备语言文件」步骤）。
 [Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+#if FileExists(AddBackslash(CompilerPath) + "Languages\ChineseSimplified.isl")
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
-Name: "english";           MessagesFile: "compiler:Default.isl"
+#endif
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："

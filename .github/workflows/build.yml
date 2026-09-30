@@ -88,6 +88,36 @@ jobs:
         run: choco install innosetup --no-progress -y
         shell: pwsh
 
+      # ── 准备简体中文语言文件 ────────────────────────────────────────────
+      #  Inno Setup 官方安装包不含 ChineseSimplified.isl（社区维护）。
+      #  setup.iss 里用 ISPP 的 FileExists 做了条件判断，因此这一步失败
+      #  也不会中断构建，只是安装向导会退回英文。
+      - name: 准备 Inno Setup 简体中文语言文件
+        continue-on-error: true
+        run: |
+          $langDir = "${env:ProgramFiles(x86)}\Inno Setup 6\Languages"
+          $dst = Join-Path $langDir 'ChineseSimplified.isl'
+          if (Test-Path $dst) {
+              Write-Host "已存在：$dst"
+              exit 0
+          }
+          $urls = @(
+              'https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl',
+              'https://raw.githubusercontent.com/jrsoftware/issrc/master/Files/Languages/Unofficial/ChineseSimplified.isl'
+          )
+          foreach ($u in $urls) {
+              try {
+                  Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $dst -TimeoutSec 30
+                  Write-Host "已下载：$dst"
+                  exit 0
+              }
+              catch {
+                  Write-Host "下载失败（$u）：$($_.Exception.Message)"
+              }
+          }
+          Write-Host "未能获取 ChineseSimplified.isl，安装向导将使用英文。"
+        shell: pwsh
+
       - name: 打印环境信息
         run: |
           Write-Host "--- dotnet ---"
