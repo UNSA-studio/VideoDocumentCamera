@@ -5,7 +5,7 @@
 > 保留它的意义：这些坑在 Windows 上"本地随便编译一下"往往不会遇到，
 > 但在干净的 CI 环境里会一个接一个地暴露出来。
 
-总计 11 个问题，跨 C++ / WinUI 3 / WiX / Inno Setup / CI 诊断五个层面。
+总计 14 个问题，跨 C++ / WinUI 3 / WiX / Inno Setup / CI 诊断五个层面。
 
 ---
 
@@ -24,6 +24,9 @@
 | 9 | WiX | `WIX0089: Multiple entry sections` | WixToolset.Sdk 已自动包含 `*.wxs`，我又显式列了一遍 | 删掉显式 `<Compile>` |
 | 10 | WiX | `WIX0369` GUID 重复 / `WIX0204 ICE30` 文件冲突 | `Guid="*"` 对同名文件算出同一 GUID；且生成器把文件全挂在根目录，子目录结构丢失 | 基于相对路径算确定性 GUID + 还原完整目录树 |
 | 11 | Inno | `Parsing [Setup] section, line 42` / `Couldn't open include file ...ChineseSimplified.isl` | `AppId={{GUID}` 花括号歧义；官方包不含中文语言文件 | AppId 用纯 GUID；用 ISPP `FileExists` 条件判断 |
+| 12 | WiX | `WIX0311: ... not available in the specified database code page '1252'` | MSI 数据库默认代码页是 1252（Latin-1），装不下中文 | `<Package Codepage="936">` |
+| 13 | WiX | `WIX0091: Duplicate symbol 'Property:ARPNOMODIFY'` | `WixUI_InstallDir` 的 wixlib 已声明该属性 | 删掉应用侧重复定义 |
+| 14 | Inno | 许可协议中文变乱码 | 无 BOM 的 UTF-8 文本被按系统 ANSI（1252）解析 | 改用 `\uN?` 转义 + `\ansicpg936` 的 RTF |
 
 ---
 
@@ -255,9 +258,68 @@ CI 里再加一步 `continue-on-error: true` 的下载，成功就能提供中�
 
 ---
 
+## 12. `WIX0311`：MSI 数据库代码页装不下中文
+
+```
+error WIX0311: A string was provided with characters that are not available
+in the specified database code page '1252'
+```
+
+MSI 数据库默认使用 **1252（Latin-1）** 代码页，任何中文都会触发这个错误 ——
+而且它是**批量报错**（每个含中文的属性各报一次），看起来像是文件被写坏了。
+
+**修复**：在 `<Package>` 上显式声明语言与代码页：
+
+```xml
+<Package Name="视频展台"
+         Language="2052"
+         Codepage="936">
+```
+
+`2052` 是简体中文的语言 ID，`936` 是 GBK 代码页 —— 两者配套使用。
+
+---
+
+## 13. `WIX0091`：与 WiX UI 库重复定义属性
+
+```
+error WIX0091: Duplicate symbol 'Property:ARPNOMODIFY' found.
+```
+
+引入 `WixUI_InstallDir` 之后，UI 库的 wixlib 里**已经声明了 `ARPNOMODIFY`**，
+应用侧如果自己也写一遍就冲突。删掉自己的那份即可。
+
+> **规律**：`WixUI_*` 系列会自带一批标准 ARP 属性（`ARPNOMODIFY`、
+> `ARPNOREPAIR` 等）。引入 UI 扩展后，应该回头检查自己定义过哪些 ——
+> 保留业务特有的（`ARPPRODUCTICON` / `ARPHELPLINK` / `ARPCOMMENTS`），
+> 删掉与库重复的。
+
+---
+
+## 14. 中文许可协议在安装向导里变乱码
+
+`LicenseFile` 指向一个**无 BOM 的 UTF-8** 文本文件时，Inno Setup 会按
+**系统 ANSI 代码页**解析 —— 本地中文 Windows（936）看着正常，
+但 CI runner 是英文 Windows（**1252**），于是中文全变乱码。
+
+**修复**：改用 RTF。中文以 `\u<码点>?` 转义、并声明 `\ansicpg936`，
+任何代码页的系统都能正确显示。RTF 由 `build.ps1` 从 `EULA.txt` 自动转换：
+
+```powershell
+LicenseFile=..\EULA.rtf
+```
+
+代价是多了一个"文本 → RTF"的转换步骤，但换来：
+
+* MSI 与 EXE 两个安装包**共用同一份许可协议源文件**（`installer/EULA.txt`）；
+* 改协议只需改 `.txt`，不必碰 RTF 的转义；
+* 跨区域设置（英文 / 日文 / 中文系统）都不会乱码。
+
+---
+
 ## 附：CI 诊断方法本身
 
-调试这 11 个问题的过程中，最有价值的经验是**如何让 CI 把话说清楚**：
+调试这 14 个问题的过程中，最有价值的经验是**如何让 CI 把话说清楚**：
 
 ### ① GitHub 的失败注解只能捕获"结构化输出"
 
