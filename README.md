@@ -101,6 +101,18 @@ git tag v1.0.0 && git push --tags   # 自动构建并挂到 Release
 在 Actions 页面（或手机上的 GitHub App）点 **Run workflow** 也能手动触发，
 构建完成后在 Artifacts 里下载 `视频展台-安装包`（MSI + EXE）与 `视频展台-便携版`。
 
+**构建产物在哪里 / 怎么拿？**
+
+| 渠道 | 需要登录 | 内容 |
+| --- | --- | --- |
+| **仓库 `dev/` 目录** | ❌ 不需要 | 最新的 MSI + EXE，点开即可下载 |
+| Actions → Artifacts | ✅ 需要 | MSI + EXE（约 108 MB）+ 便携版（约 75 MB） |
+| Releases 页面 | ❌ 不需要 | 打 `v*` tag 时自动发布的正式版本 |
+
+> `dev/` 目录由 CI 在**主干分支构建成功后自动写入并提交**（提交信息带 `[skip ci]`，
+> 且 push 事件忽略 `dev/**`，不会造成构建循环）。
+> 里面的文件是覆盖式的，只保留最新一次构建的结果。
+
 ### 方式 B：Windows 本机打包
 
 前置：VS2022（**必须勾选「使用 C++ 的桌面开发」**）、.NET 8 SDK、WiX v4、Inno Setup 6。
