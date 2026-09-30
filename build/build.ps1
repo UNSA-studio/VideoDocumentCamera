@@ -102,6 +102,54 @@ function Assert-Command([string]$name, [string]$hint) {
     }
 }
 
+# ── UTF-8 文本 → RTF ────────────────────────────────────────────────────────
+#  WiX 的许可协议页（WixUILicenseRtf）只接受 RTF 格式，而 RTF 是 ASCII 方言：
+#  非 ASCII 字符必须写成 \u<十进制码点>? 的转义形式，否则中文会乱码。
+#  这里从 installer/EULA.txt（UTF-8，便于维护）自动转换，
+#  供 WiX 使用；Inno Setup 则直接读取 .txt，无需转换。
+function ConvertTo-Rtf {
+    param(
+        [Parameter(Mandatory = $true)][string]$TextPath,
+        [Parameter(Mandatory = $true)][string]$RtfPath
+    )
+
+    if (-not (Test-Path $TextPath)) {
+        Write-Warning "  许可协议源文件不存在，跳过 RTF 生成：$TextPath"
+        return $false
+    }
+
+    $text = [IO.File]::ReadAllText($TextPath, [Text.Encoding]::UTF8)
+
+    $sb = New-Object System.Text.StringBuilder
+    # \ansicpg936（GBK 代码页）+ 中文字体；\uc1 表示每个 \uN 后跟 1 个替代字符
+    [void]$sb.Append('{\rtf1\ansi\ansicpg936\deff0{\fonttbl{\f0\fnil\fcharset134 Microsoft YaHei;}}')
+    [void]$sb.Append("`r`n")
+    [void]$sb.Append('\viewkind4\uc1\pard\f0\fs18')
+    [void]$sb.Append("`r`n")
+
+    foreach ($ch in $text.ToCharArray()) {
+        $code = [int]$ch
+
+        if ($ch -eq "`r") { continue }
+        if ($ch -eq "`n") { [void]$sb.Append("\par`r`n"); continue }
+        if ($ch -eq '\') { [void]$sb.Append('\\'); continue }
+        if ($ch -eq '{') { [void]$sb.Append('\{'); continue }
+        if ($ch -eq '}') { [void]$sb.Append('\}'); continue }
+
+        if ($code -lt 128) {
+            [void]$sb.Append($ch)
+        }
+        elseif ($code -le 65535) {
+            [void]$sb.Append('\u' + $code + '?')
+        }
+    }
+
+    [void]$sb.Append('}')
+
+    [IO.File]::WriteAllText($RtfPath, $sb.ToString(), [Text.Encoding]::ASCII)
+    return $true
+}
+
 function Find-MSBuild {
     $candidate = $null
 
@@ -365,6 +413,16 @@ if ($doMsi) {
     #          error WIX0204: ICE30: The target file 'xxx.mui' is installed in ...
     #          by two different components
     #      而且安装后目录结构会全部塌平。
+    # ── 生成 RTF 版许可协议 ─────────────────────────────────────────────
+    #  WiX 的许可页只接受 RTF；源文件维护在 installer/EULA.txt（UTF-8）。
+    $installerDir = Split-Path $msiProj            # installer/wix  → installer
+    $installerDir = Split-Path $installerDir
+    $eulaTxt = Join-Path $installerDir 'EULA.txt'
+    $eulaRtf = Join-Path $installerDir 'EULA.rtf'
+    if (ConvertTo-Rtf -TextPath $eulaTxt -RtfPath $eulaRtf) {
+        Write-Host "  已生成许可协议：$eulaRtf"
+    }
+
     $generatedWxs = Join-Path (Split-Path $msiProj) 'GeneratedFiles.wxs'
     $allFiles = Get-ChildItem $appOutDir -Recurse -File
     $rootLen = $appOutDir.TrimEnd('\').Length + 1

@@ -1,0 +1,19 @@
+视频展台（VideoPresenter）
+Copyright © 2026 UNSA Studio. All rights reserved.
+
+本项目采用自定义的最终用户许可协议（EULA），而非标准的开源许可证。
+
+完整条款请见：
+    installer/EULA.txt
+
+要点摘要（仅供快速了解，不构成协议本身）：
+
+  · 可免费用于个人学习、教学及非商业用途；
+  · 不得反向工程、反编译或试图获取源代码；
+  · 不得移除版权标识，不得以自己名义再分发；
+  · 不得出租、出售或转授权；
+  · 软件按「现状」提供，不附带任何保证；
+  · 商业用途需另行取得授权。
+
+第三方组件（如 .NET、Windows App SDK、WiX Toolset、Inno Setup）
+各自遵循其自身的许可条款。

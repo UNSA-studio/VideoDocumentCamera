@@ -11,6 +11,10 @@ build/obj/
 # WiX 文件清单：由 build.ps1 每次构建时扫描 dist/app 重新生成
 installer/wix/GeneratedFiles.wxs
 
+# WiX 许可协议：由 build.ps1 从 installer/EULA.txt 转换生成
+# （源文件 EULA.txt 入库，RTF 是派生产物）
+installer/EULA.rtf
+
 # ───────────────────────────── 图标资源 ─────────────────────────────
 # 说明：应用图标已入库（仓库中直接可用）：
 #   src/VideoPresenter.App/Assets/VideoPresenter.ico   （多尺寸 ICO）

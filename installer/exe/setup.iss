@@ -52,6 +52,10 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 
+; 许可协议：Inno 原生支持 .txt，直接读取仓库里的 EULA.txt（无需转换）。
+; 安装向导会显示协议全文，用户必须勾选「我接受」才能继续。
+LicenseFile=..\EULA.txt
+
 DefaultDirName={autopf}\UNSA Studio\{#MyAppName}
 DefaultGroupName=UNSA Studio
 DisableProgramGroupPage=yes

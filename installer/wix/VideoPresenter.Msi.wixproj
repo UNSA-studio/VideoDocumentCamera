@@ -15,6 +15,8 @@
         <VpVersion Condition="'$(VpVersion)' == ''">1.0.0</VpVersion>
         <VpPublishDir Condition="'$(VpPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\dist\app\</VpPublishDir>
         <VpIconPath Condition="'$(VpIconPath)' == ''">$(MSBuildThisFileDirectory)..\..\src\VideoPresenter.App\Assets\VideoPresenter.ico</VpIconPath>
+        <!-- 许可协议 RTF：由 build.ps1 从 installer/EULA.txt 转换生成 -->
+        <VpEulaRtf Condition="'$(VpEulaRtf)' == ''">$(MSBuildThisFileDirectory)..\..\installer\EULA.rtf</VpEulaRtf>
 
         <OutputName>视频展台-$(VpVersion)-x64</OutputName>
         <OutputType>Package</OutputType>
@@ -25,7 +27,7 @@
         <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\build\obj\Msi\$(Configuration)\</IntermediateOutputPath>
 
         <SuppressIces>ICE61</SuppressIces>
-        <DefineConstants>VpVersion=$(VpVersion);VpPublishDir=$(VpPublishDir);VpIconPath=$(VpIconPath)</DefineConstants>
+        <DefineConstants>VpVersion=$(VpVersion);VpPublishDir=$(VpPublishDir);VpIconPath=$(VpIconPath);VpEulaRtf=$(VpEulaRtf)</DefineConstants>
     </PropertyGroup>
 
     <!--
@@ -37,5 +39,15 @@
             error WIX0089: Multiple entry sections '*' and '*' found.
             error WIX0091: Duplicate symbol 'Property:ProductCode' ...
     -->
+
+<ItemGroup>
+        <!--
+            安装向导 UI（WiX v4 的 UI 扩展）。
+
+            没有它，MSI 双击后只会显示一个进度条，没有欢迎页 / 许可协议页 /
+            安装路径选择 —— 也就是说 WixUILicenseRtf 也不会生效。
+        -->
+        <PackageReference Include="WixToolset.UI.wixext" Version="4.0.5" />
+    </ItemGroup>
 
 </Project>

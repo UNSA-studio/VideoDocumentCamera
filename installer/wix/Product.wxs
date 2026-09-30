@@ -17,7 +17,8 @@
        * 采用 <Files Include> 通配收集发布目录，新增文件无需修改本文件。
     ============================================================================
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
     <Package Name="视频展台"
              Manufacturer="UNSA Studio"
@@ -36,6 +37,19 @@
         <MajorUpgrade DowngradeErrorMessage="已安装更高版本的「视频展台」，请先卸载后再安装当前版本。"
                       AllowSameVersionUpgrades="yes"/>
         <MediaTemplate EmbedCab="yes"/>
+
+        <!-- ══════════ 安装界面 ══════════
+
+             此前这里没有引用 WiX 的 UI 扩展，后果是：
+             双击 MSI 只会看到一个进度条 —— 没有欢迎页、没有许可协议页、
+             也没有安装路径选择。现在补上标准的 InstallDir 向导。
+
+             许可页的 RTF 由 build.ps1 从 installer/EULA.txt 自动转换生成
+             （WiX 的 WixUILicenseRtf 只接受 RTF 格式）。
+        -->
+        <ui:WixUI Id="WixUI_InstallDir"/>
+        <WixVariable Id="WixUILicenseRtf" Value="$(VpEulaRtf)"/>
+        <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
 
         <!-- 程序与控制面板图标 -->
         <Icon Id="VpAppIcon" SourceFile="$(VpIconPath)"/>
