@@ -67,8 +67,9 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; 用传统值 x64（而非 Inno Setup 6.3+ 才引入的 x64compatible），兼容性最好
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
 
 MinVersion=10.0.17763
 VersionInfoVersion=1.0.0.0
