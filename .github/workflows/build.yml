@@ -25,9 +25,19 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
+    # CI 会把构建产物提交到 dev/ —— 必须忽略该目录，
+    # 否则每次提交产物都会再次触发构建，形成无限循环。
+    # （提交信息里另外带了 [skip ci]，双保险）
+    paths-ignore:
+      - 'dev/**'
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      publish_to_dev:
+        description: '把构建产物提交到仓库 dev/ 文件夹'
+        type: boolean
+        default: true
 
 permissions:
   contents: write      # 打 tag 时创建 Release
@@ -190,3 +200,88 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ══════════ 把产物提交到仓库 dev/ ══════════
+      #  目的：GitHub 的 Artifacts 需要登录才能下载；提交进仓库后，
+      #        任何人（包括手机浏览器、未登录状态）都能直接从 dev/ 取到安装包。
+      #
+      #  只在主干分支的 push、或手动触发（且勾选了开关）时执行 ——
+      #  PR 的 GITHUB_TOKEN 是只读的，跑不通；tag 构建处于 detached HEAD，也推不了。
+      - name: 发布产物到仓库 dev/
+        if: |
+          success()
+          && (github.event_name == 'workflow_dispatch' && inputs.publish_to_dev
+              || github.event_name == 'push'
+                 && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          New-Item -ItemType Directory -Path dev -Force | Out-Null
+          Remove-Item dev\* -Recurse -Force -ErrorAction SilentlyContinue
+
+          # 只收录安装包。便携版是 200 MB+ 的目录树（300 多个文件），
+          # 既不适合入库，也远超 GitHub 的单文件/仓库体积预期。
+          Get-ChildItem dist -File |
+              Where-Object { $_.Extension -in '.msi', '.exe' } |
+              ForEach-Object { Copy-Item $_.FullName dev\ -Force }
+
+          # ⚠ GitHub 的单文件硬上限是 100 MB，超限的 push 会被直接拒绝。
+          #   这里主动剔除并给出警告，避免整个发布步骤失败。
+          $limitMb = 95
+          foreach ($f in (Get-ChildItem dev -File)) {
+              $mb = [Math]::Round($f.Length / 1MB, 1)
+              if ($mb -gt $limitMb) {
+                  Write-Host ("::warning::" + $f.Name + " 为 " + $mb + " MB，超过 GitHub 单文件上限，已跳过")
+                  Remove-Item $f.FullName -Force
+              }
+              else {
+                  Write-Host ("  " + $f.Name + "  " + $mb + " MB")
+              }
+          }
+
+          # 生成目录清单
+          $lines = @(
+              '# dev —— 构建产物',
+              '',
+              '> ⚠ **本目录由 CI 自动生成，请勿手工修改**（每次构建会被整体覆盖）。',
+              '',
+              '这里的安装包来自 GitHub Actions 的自动构建，',
+              '提交进仓库是为了让**未登录**的访问者（含手机浏览器）也能直接下载。',
+              '',
+              '| 文件 | 大小 |',
+              '| --- | --- |'
+          )
+          foreach ($f in (Get-ChildItem dev -File)) {
+              $lines += ('| `' + $f.Name + '` | ' + [Math]::Round($f.Length / 1MB, 1) + ' MB |')
+          }
+          $lines += @(
+              '',
+              '---',
+              '',
+              '* 构建时间：' + (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') + ' UTC',
+              '* 源码提交：`' + $env:GITHUB_SHA + '`',
+              '* 流水线：' + $env:GITHUB_SERVER_URL + '/' + $env:GITHUB_REPOSITORY + '/actions/runs/' + $env:GITHUB_RUN_ID,
+              '',
+              '> 需要历史版本或更小的分发体积，请使用 **Releases** 页面；',
+              '> 需要便携版（解压即用）请到 Actions 的 Artifacts 下载。'
+          )
+          [IO.File]::WriteAllText(
+              (Join-Path (Get-Location) 'dev/README.md'),
+              ($lines -join "`n"),
+              (New-Object System.Text.UTF8Encoding $false))
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add dev/
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+              Write-Host 'dev/ 内容没有变化，跳过提交。'
+              exit 0
+          }
+
+          $short = $env:GITHUB_SHA.Substring(0, 7)
+          # [skip ci] 防止这次提交再次触发构建（与 paths-ignore 双保险）
+          git commit -m "CI: 更新 dev/ 安装包（$short）[skip ci]"
+          git push
+        shell: pwsh
