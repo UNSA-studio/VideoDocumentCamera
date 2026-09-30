@@ -7,23 +7,23 @@
 
 | 文件 | 大小 |
 | --- | --- |
-| `视频展台-1.0.0-x64-setup.exe` | 49.9 MB |
-| `视频展台-1.0.0-x64.msi` | 59.6 MB |
+| `vdc-1.0.0-x64-setup.exe` | 49.9 MB |
+| `vdc-1.0.0-x64.msi` | 59.6 MB |
 
 ---
 
 * 构建时间：
-2026-09-30 11:12:38
+2026-09-30 11:42:51
  UTC
 * 源码提交：`
-6ef91bcc650546b771b9aa4bc1bfef5bcc2db4b3
+5fe9313cccfd788147806b39bd4e6152c010d76e
 `
 * 流水线：
 https://github.com
 /
 UNSA-studio/VideoDocumentCamera
 /actions/runs/
-36706728930
+36709838522
 
 > 需要历史版本或更小的分发体积，请使用 **Releases** 页面；
 > 需要便携版（解压即用）请到 Actions 的 Artifacts 下载。
