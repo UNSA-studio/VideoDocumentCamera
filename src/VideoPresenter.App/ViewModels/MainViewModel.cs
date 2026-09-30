@@ -214,6 +214,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ? $"启动耗时 {BootSignal.Instance.ElapsedMs} ms"
         : "开发模式";
 
+    /// <summary>
+    /// 诊断日志的完整路径（显示在"未连接设备"的引导层里）。
+    /// <para>
+    /// 相机枚举失败的原因（系统缺 Media Foundation、设备被占用、驱动异常）
+    /// 只靠界面没法判断，日志文件才是排查依据。
+    /// </para>
+    /// </summary>
+    public string LogFilePathText => "诊断日志：" + Services.MediaFoundationCameraService.LogFilePath;
+
     // ───────────────────────── 命令 ─────────────────────────
 
     public ICommand RefreshDevicesCommand { get; }

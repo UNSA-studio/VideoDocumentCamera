@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Windows.Graphics.Imaging;
@@ -102,6 +103,55 @@ public sealed class MediaFoundationCameraService : ICameraService
     public event EventHandler<SoftwareBitmap>? FrameArrived;
     public event EventHandler<string>? StatusChanged;
 
+    // ══════════════════════════ 诊断日志 ══════════════════════════
+
+    /// <summary>
+    /// 日志文件路径（供界面提示 / 用户反馈用）。
+    /// <para>%LOCALAPPDATA%\UNSA Studio\VideoDocumentCamera\logs\vdc.log</para>
+    /// </summary>
+    public static string LogFilePath
+    {
+        get
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "UNSA Studio", "VideoDocumentCamera", "logs");
+            return Path.Combine(dir, "vdc.log");
+        }
+    }
+
+    /// <summary>
+    /// 同时写 Debug 输出与日志文件。
+    /// <para>
+    /// 为什么要有文件日志：相机枚举失败的原因（系统缺 Media Foundation、
+    /// 设备被占用、驱动异常……）在客户机上无法用调试器看。
+    /// 有了这个文件，用户直接把日志发回来就能定位。
+    /// </para>
+    /// </summary>
+    private static void Log(string message)
+    {
+        Debug.WriteLine(message);
+
+        try
+        {
+            string file = LogFilePath;
+
+            var fi = new FileInfo(file);
+            if (fi.Exists && fi.Length > 1024 * 1024)
+            {
+                fi.Delete();   // 只保留最近 1 MB
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.AppendAllText(file,
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // 日志失败绝不能影响主流程
+        }
+    }
+
     public MediaFoundationCameraService()
     {
         // ⚠ 这里【绝对不能抛异常】。
@@ -149,7 +199,6 @@ public sealed class MediaFoundationCameraService : ICameraService
             _devices.Clear();
 
             IMFAttributes? attributes = null;
-            IMFActivate[]? activates = null;
 
             try
             {
@@ -160,32 +209,67 @@ public sealed class MediaFoundationCameraService : ICameraService
                 Guid vidcapValue = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID;
                 attributes.SetGUID(ref srcTypeKey, ref vidcapValue);
 
-                int hr = MFEnumDeviceSources(attributes, out activates, out uint count);
-                if (hr < 0 || activates is null)
-                    throw new InvalidOperationException($"MFEnumDeviceSources 失败 0x{hr:X8}");
+                // ── 枚举设备（手动遍历指针数组，见下方 P/Invoke 处的说明）──
+                int hr = MFEnumDeviceSources(attributes, out IntPtr pArray, out uint count);
 
-                for (int i = 0; i < count; i++)
+                Log($"[VP-MF] MFEnumDeviceSources → hr=0x{hr:X8}, count={count}, array=0x{pArray.ToInt64():X}");
+
+                if (hr < 0)
+                    throw new InvalidOperationException($"MFEnumDeviceSources 失败，HRESULT=0x{hr:X8}");
+
+                if (pArray == IntPtr.Zero || count == 0)
                 {
-                    string name = GetActivateString(activates[i], MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME);
-                    string link = GetActivateString(activates[i], MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK);
-                    _devices.Add(new CameraDevice(i, string.IsNullOrWhiteSpace(name) ? $"视频设备 {i + 1}" : name, link));
+                    Log("[VP-MF] 系统返回 0 个视频设备（机器上可能确实没有摄像头/展台）");
+                }
+                else
+                {
+                    try
+                    {
+                        for (uint i = 0; i < count; i++)
+                        {
+                            IntPtr pActivate = Marshal.ReadIntPtr(pArray, (int)i * IntPtr.Size);
+                            if (pActivate == IntPtr.Zero) continue;
+
+                            var activate = (IMFActivate)Marshal.GetObjectForIUnknown(pActivate);
+                            try
+                            {
+                                string name = GetActivateString(activate, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME);
+                                string link = GetActivateString(activate, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK);
+
+                                Log($"[VP-MF] 设备 {i}：\"{name}\"");
+
+                                _devices.Add(new CameraDevice(
+                                    (int)i,
+                                    string.IsNullOrWhiteSpace(name) ? $"视频设备 {i + 1}" : name,
+                                    link));
+                            }
+                            finally
+                            {
+                                Marshal.ReleaseComObject(activate);  // 抵掉 GetObjectForIUnknown 的 AddRef
+                                Marshal.Release(pActivate);          // 释放 MF 返回的那份引用
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.FreeCoTaskMem(pArray);               // 释放指针数组本身
+                    }
                 }
 
-                Debug.WriteLine($"[VP-MF] 枚举到 {_devices.Count} 个视频设备");
+                Log($"[VP-MF] 枚举完成，共 {_devices.Count} 个视频设备");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[VP-MF] 设备枚举失败：{ex.Message}");
+                Log($"[VP-MF] 设备枚举失败：{ex}");
             }
             finally
             {
-                if (activates is not null)
-                    foreach (var a in activates) Marshal.ReleaseComObject(a);
-
                 if (attributes is not null) Marshal.ReleaseComObject(attributes);
             }
 
-            StatusChanged?.Invoke(this, $"已发现 {_devices.Count} 个视频设备");
+            StatusChanged?.Invoke(this, _devices.Count > 0
+                ? $"已发现 {_devices.Count} 个视频设备"
+                : "未发现视频设备（请检查设备连接与驱动）");
         }
     }
 
@@ -232,14 +316,35 @@ public sealed class MediaFoundationCameraService : ICameraService
                 Guid vidcapValue = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID;
                 attributes.SetGUID(ref srcTypeKey, ref vidcapValue);
 
-                int hr = MFEnumDeviceSources(attributes, out IMFActivate[]? activates, out uint count);
-                if (hr < 0 || activates is null || device.Index >= count)
-                    return Fail("无法再次枚举到该视频设备");
+                // 同样手动遍历指针数组（理由见 MFEnumDeviceSources 的 P/Invoke 说明）
+                int hr = MFEnumDeviceSources(attributes, out IntPtr pArray, out uint count);
+
+                if (hr < 0 || pArray == IntPtr.Zero || device.Index < 0 || device.Index >= (int)count)
+                {
+                    Marshal.FreeCoTaskMem(pArray);   // 传 Zero 是安全的 no-op
+                    return Fail($"无法再次枚举到该视频设备（索引 {device.Index}，共 {count} 个）");
+                }
 
                 Guid iidSource = IID_IMFMediaSource;
-                hr = activates[device.Index].ActivateObject(ref iidSource, out source);
+                try
+                {
+                    IntPtr pActivate = Marshal.ReadIntPtr(pArray, device.Index * IntPtr.Size);
+                    var activate = (IMFActivate)Marshal.GetObjectForIUnknown(pActivate);
+                    try
+                    {
+                        hr = activate.ActivateObject(ref iidSource, out source);
+                    }
+                    finally
+                    {
+                        Marshal.ReleaseComObject(activate);
+                        Marshal.Release(pActivate);
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeCoTaskMem(pArray);
+                }
 
-                foreach (var a in activates) Marshal.ReleaseComObject(a);
                 Marshal.ReleaseComObject(attributes);
                 attributes = null;
 
@@ -525,10 +630,21 @@ public sealed class MediaFoundationCameraService : ICameraService
     private static extern int MFCreateSourceReaderFromMediaSource(
         IntPtr pMediaSource, IMFAttributes? pAttributes, out IMFSourceReader ppSourceReader);
 
+    // ⚠ 关键：这里【不能】用 LPArray + SizeParamIndex 让 marshaler 自动转数组。
+    //
+    //  原生签名：
+    //      HRESULT MFEnumDeviceSources(IMFAttributes*, IMFActivate***, UINT32*);
+    //                                       ↑ 指向指针数组的指针
+    //
+    //  用 out IMFActivate[] + SizeParamIndex 看起来优雅，但数组长度参数排在
+    //  数组之后 —— marshaler 需要先知道长度才能分配托管数组，处理顺序一乱，
+    //  就会"返回成功但拿到空数组"，表现为【一个设备都扫不到，且不报任何错】。
+    //
+    //  因此退回最笨但最可靠的写法：拿 IntPtr，自己按指针宽度逐个读。
     [DllImport("mf.dll", ExactSpelling = true)]
     private static extern int MFEnumDeviceSources(
         IMFAttributes pAttributes,
-        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 2)] out IMFActivate[]? pppSourceActivate,
+        out IntPtr pppSourceActivate,
         out uint pcSourceActivate);
 
     /// <summary>WinRT 缓冲的原始指针访问接口（写 SoftwareBitmap 用）。</summary>

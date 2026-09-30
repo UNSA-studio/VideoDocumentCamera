@@ -303,6 +303,15 @@
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                HorizontalAlignment="Center"/>
+
+                    <!-- 把日志路径显示出来：万一仍然扫不到设备，用户可以直接把日志发回来 -->
+                    <TextBlock Text="{x:Bind Vm.LogFilePathText}"
+                               FontSize="10"
+                               Margin="0,16,0,0"
+                               HorizontalAlignment="Center"
+                               TextWrapping="Wrap"
+                               MaxWidth="560"
+                               Foreground="{ThemeResource TextFillColorDisabledBrush}"/>
                 </StackPanel>
             </Grid>
 

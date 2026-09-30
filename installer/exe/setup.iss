@@ -58,11 +58,10 @@ AppUpdatesURL={#MyAppURL}
 ;  RTF 里中文以 \u<码点>? 转义并声明 \ansicpg936，任何系统都能正确显示。
 LicenseFile=..\EULA.rtf
 
-; 安装目录：UNSA Studio\VideoDocumentCamera
-;  刻意使用【英文】目录名 —— MSI 在 8.3 短文件名机制下会把中文折叠成 '????'，
-;  纯 ASCII 路径可避开短文件名、命令行转义、区域设置这一整类问题。
-;  用户可见的名称（开始菜单、桌面快捷方式、控制面板）仍然是中文「视频展台」。
-DefaultDirName={autopf}\UNSA Studio\VideoDocumentCamera
+; 安装目录：C:\Program Files\UNSA Studio\vdc\
+;  vdc = VideoDocumentCamera 缩写（与安装包文件名一致），纯 ASCII。
+;  用户可见的名称（开始菜单 / 桌面快捷方式 / 控制面板）仍然是中文「视频展台」。
+DefaultDirName={autopf}\UNSA Studio\vdc
 DefaultGroupName=UNSA Studio
 DisableProgramGroupPage=yes
 AllowNoIcons=yes

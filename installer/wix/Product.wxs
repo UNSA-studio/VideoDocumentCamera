@@ -67,17 +67,15 @@
         <StandardDirectory Id="ProgramFiles64Folder">
             <Directory Id="MANUFACTURERFOLDER" Name="UNSA Studio">
                 <!--
-                    安装目录用【英文】而不是「视频展台」。
+                    安装目录刻意使用【英文】且简短：
+                      C:\Program Files\UNSA Studio\vdc\
 
-                    原因是踩过的坑：MSI 在 8.3 短文件名（SFN）机制下会把中文目录名
-                    折叠成 '????'，此前的 ICE30 报错里就出现过
-                        [ProgramFiles64Folder]\i8gueiie\????\
-                    虽然当时没有致命，但纯 ASCII 路径可以彻底避开
-                    短文件名、命令行转义、区域设置这一整类问题。
-
-                    用户可见的显示名仍然是中文（快捷方式、控制面板里都是「视频展台」）。
+                    · vdc = VideoDocumentCamera 的缩写（与安装包文件名一致）
+                    · 纯 ASCII 路径可避开 MSI 8.3 短文件名把中文折叠成 '????' 的问题
+                      （此前 ICE30 报错里实际出现过 [ProgramFiles64Folder]\i8gueiie\????\）
+                    · 用户可见的显示名仍然是中文「视频展台」（快捷方式 / 控制面板）
                 -->
-                <Directory Id="INSTALLFOLDER" Name="VideoDocumentCamera"/>
+                <Directory Id="INSTALLFOLDER" Name="vdc"/>
             </Directory>
         </StandardDirectory>
 
