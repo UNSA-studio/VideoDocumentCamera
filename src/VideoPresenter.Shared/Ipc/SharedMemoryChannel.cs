@@ -203,12 +203,25 @@ public sealed class NamedSignal : IDisposable
             throw new IOException($"CreateEventW 失败，Win32Error={Marshal.GetLastWin32Error()}");
         return new NamedSignal(name, h, true);
     }
-
-    public static NamedSignal Open(string name)
+public static NamedSignal Open(string name)
     {
-        IntPtr h = NativeMethods.OpenEventW(NativeMethods.FILE_MAP_ALL_ACCESS, false, name);
+        // ⚠ 这里【绝不能】用 FILE_MAP_ALL_ACCESS！
+        //
+        //   FILE_MAP_ALL_ACCESS 是"文件映射对象"的访问权限常量，
+        //   用在"事件对象"上会被内核直接拒绝（ERROR_ACCESS_DENIED）。
+        //
+        //   一旦这里失败，主程序就无法打开启动器创建的就绪事件 ——
+        //   于是整条握手链路静默断掉：主程序照常启动，却永远不会 SetEvent，
+        //   启动器只能一直干等。
+        //
+        //   事件对象正确的访问权限是 EVENT_MODIFY_STATE（用于 SetEvent）
+        //   加上 SYNCHRONIZE（用于等待）。
+        IntPtr h = NativeMethods.OpenEventW(
+            NativeMethods.EVENT_MODIFY_STATE | NativeMethods.SYNCHRONIZE, false, name);
+
         if (h == IntPtr.Zero)
             throw new IOException($"OpenEventW 失败，Win32Error={Marshal.GetLastWin32Error()}");
+
         return new NamedSignal(name, h, false);
     }
 

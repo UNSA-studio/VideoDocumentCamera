@@ -37,7 +37,7 @@ const wchar_t* kSingleMutex   = L"Local\\UNSA.VP.SingleInstance";
 const wchar_t* kActivateMsg   = L"UNSA.VP.Activate";
 
 const UINT_PTR  kAnimIntervalMs = 33;                       // 30 fps 走马灯
-const DWORD     kBootTimeoutMs  = 60000;                    // 主程序启动超时
+const DWORD     kBootTimeoutMs  = 30000;                    // 主程序启动超时（30s）
 
 const int kBaseWidth  = 440;
 const int kBaseHeight = 150;
@@ -45,6 +45,12 @@ const int kPadding    = 24;
 
 // 由 RegisterWindowMessageW 动态分配的"激活已有实例"消息
 UINT g_msgActivate = 0;
+
+// 主程序进程句柄（不立即关闭）。
+// 主循环要用它做两道兜底检测：
+//   ① 主程序是否已经退出（崩溃 / 被杀）
+//   ② 主程序是否已经进入消息循环（WaitForInputIdle）
+HANDLE g_hProcess = nullptr;
 
 // ── Splash 状态 ─────────────────────────────────────────────────────────────
 struct SplashState
@@ -318,7 +324,10 @@ bool LaunchApp(VP_CHANNEL& ch, const wchar_t* exePath)
     if (!ok) return false;
 
     CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
+
+    // ⚠ 进程句柄要留着 —— 主循环用它判断"主程序是否已退出 / 是否已进入消息循环"。
+    //   由 CleanupAndExit 统一关闭。
+    g_hProcess = pi.hProcess;
 
     ch.header->state = VP_LAUNCHING;
     return true;
@@ -329,6 +338,12 @@ bool LaunchApp(VP_CHANNEL& ch, const wchar_t* exePath)
 [[noreturn]] void CleanupAndExit(int code)
 {
     if (g.hwnd) { DestroyWindow(g.hwnd); g.hwnd = nullptr; }
+
+    if (g_hProcess)
+    {
+        CloseHandle(g_hProcess);
+        g_hProcess = nullptr;
+    }
 
     // 关闭共享内存与事件句柄。
     // 主程序侧同样会释放自己的句柄；当引用计数归零，
@@ -408,6 +423,35 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int)
     MSG msg;
     for (;;)
     {
+        DWORD elapsed = GetTickCount() - g.startTick;
+
+        // ══════════════ 兜底检测 ══════════════
+        //  握手事件（hReady）是第一优先信号；但为了不让启动器"因为单一信号
+        //  出问题就永远挂着"，这里再加两道独立的检测。
+
+        if (g_hProcess)
+        {
+            // ① 主程序进程已经退出（崩溃 / 被任务管理器结束）
+            if (WaitForSingleObject(g_hProcess, 0) == WAIT_OBJECT_0)
+            {
+                g.phase = 2;
+                wcscpy_s(g.status, L"主程序已退出，请查看诊断日志");
+                InvalidateRect(g.hwnd, nullptr, FALSE);
+                Sleep(3000);
+                CleanupAndExit(6);
+            }
+
+            // ② 主程序已经进入消息循环（WaitForInputIdle 返回 0）
+            //    说明它的窗口已经建好、可以正常使用了 ——
+            //    即便握手信号因为任何原因没送到，启动器也没有理由继续挂着。
+            //    加 800ms 门槛，避免在窗口尚未创建时过早退出。
+            if (elapsed > 800 && WaitForInputIdle(g_hProcess, 0) == 0)
+            {
+                g.phase = 1;
+                break;
+            }
+        }
+
         // +1 表示"有窗口消息"，0 表示"就绪事件被 SetEvent"
         DWORD r = MsgWaitForMultipleObjects(1, &g_channel.hReady, FALSE, kAnimIntervalMs, QS_ALLINPUT);
 
@@ -426,8 +470,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int)
                 DispatchMessageW(&msg);
             }
         }
-
-        DWORD elapsed = GetTickCount() - g.startTick;
 
         // 依据主程序回填的状态更新副标题（这就是"同内存交换数据"的体现）
         if (g_channel.header)

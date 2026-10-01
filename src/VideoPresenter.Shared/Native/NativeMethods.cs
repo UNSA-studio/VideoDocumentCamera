@@ -15,6 +15,13 @@ internal static class NativeMethods
     public const uint FILE_MAP_ALL_ACCESS = 0x000F001F;
     public const uint FILE_MAP_READ = 0x0004;
 
+    // ⚠ 事件对象有【自己的一套】访问权限。
+    //   给 OpenEventW 传 FILE_MAP_ALL_ACCESS 会被拒绝（ERROR_ACCESS_DENIED），
+    //   必须用下面这些。
+    public const uint EVENT_MODIFY_STATE = 0x0002;   // SetEvent / ResetEvent
+    public const uint SYNCHRONIZE = 0x00100000;      // 用于等待
+    public const uint EVENT_ALL_ACCESS = 0x001F0003;
+
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern IntPtr CreateFileMappingW(
         IntPtr hFile,

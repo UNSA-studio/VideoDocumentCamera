@@ -46,18 +46,25 @@ public sealed class BootHandshakeSession : IDisposable
     {
         if (!args.HasHandshake) return null;
 
+        SharedMemoryChannel? channel = null;
+        NamedSignal? signal = null;
+
         try
         {
-            var channel = SharedMemoryChannel.AttachWithRetry(args.MemoryMapName!, timeoutMs: 3000);
-            var signal = NamedSignal.OpenWithRetry(args.ReadyEventName!, timeoutMs: 3000);
+            channel = SharedMemoryChannel.AttachWithRetry(args.MemoryMapName!, timeoutMs: 3000);
+            signal = NamedSignal.OpenWithRetry(args.ReadyEventName!, timeoutMs: 3000);
 
             var session = new BootHandshakeSession(args, channel, signal);
             session.Validate();
             return session;
         }
-        catch (IOException ex)
+        catch (Exception ex)
         {
             Debug.WriteLine($"[VP-Boot] 握手通道附加失败：{ex.Message}");
+
+            // 附加失败时必须放掉已经拿到的句柄，否则会泄漏
+            signal?.Dispose();
+            channel?.Dispose();
             return null;
         }
     }
