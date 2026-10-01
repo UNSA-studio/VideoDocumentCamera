@@ -293,6 +293,24 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
 .sb-right .sepv{width:1px;height:12px;background:var(--divider)}
 .sb-left{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* 设置行的开关 / 滑杆 / 下拉 */
+.setrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;font-size:12px}
+.setrow>label:first-child{flex:1;color:var(--text)}
+.sw{position:relative;width:40px;height:20px;flex:none;cursor:pointer}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw i{position:absolute;inset:0;border-radius:10px;background:var(--ctrl-hover);
+      border:1px solid var(--control-border);transition:background .18s,border-color .18s}
+.sw i::after{content:"";position:absolute;left:3px;top:3px;width:12px;height:12px;border-radius:50%;
+             background:var(--text-2);transition:left .18s,background .18s}
+.sw input:checked+i{background:var(--accent);border-color:var(--accent)}
+.sw input:checked+i::after{left:22px;background:var(--on-accent)}
+.setrow input[type=range]{width:110px;flex:none;accent-color:var(--accent)}
+.setrow .btn.sm{height:26px;font-size:11px;padding:0 8px}
+.setrow .combo.sm{height:28px;min-width:110px;max-width:140px;font-size:11px;padding-right:24px}
+.mini-dots{display:flex;gap:5px}
+.mini-dots button{width:18px;height:18px;border-radius:50%;border:1px solid rgba(255,255,255,.4);padding:0;cursor:pointer}
+.mini-dots button.sel{box-shadow:0 0 0 2px var(--accent)}
+
 /* ────────────── 设置面板 ────────────── */
 .overlay{
   position:absolute;inset:0;background:rgba(0,0,0,.28);
@@ -570,6 +588,44 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
 
       <h3>关于</h3>
       <p>视频展台 v1.0.0 · UNSA Studio</p>
+
+      <!-- ══════════ 设置项（可操作）══════════ -->
+      <h3>常规</h3>
+      <div class="setrow"><label>启动时自动全屏</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+      <div class="setrow"><label>自动连接唯一设备</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+      <div class="setrow"><label>自动检测设备插拔</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+      <div class="setrow"><label>状态栏显示启动耗时</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+
+      <h3>拍照</h3>
+      <div class="setrow"><label>照片格式（开 = JPEG，关 = PNG）</label><label class="sw"><input type="checkbox" id="swJpeg"><i></i></label></div>
+      <div class="setrow"><label>JPEG 质量</label><input type="range" min="60" max="100" value="92" id="rgQuality"></div>
+      <div class="setrow"><label>拍照后复制到剪贴板</label><label class="sw"><input type="checkbox"><i></i></label></div>
+      <div class="setrow"><label>保存目录：图片\视频展台</label><button class="btn sm">选择文件夹…</button></div>
+
+      <h3>录像</h3>
+      <div class="setrow"><label>帧率</label>
+        <select class="combo sm"><option>15 fps</option><option selected>30 fps</option><option>60 fps</option></select>
+      </div>
+      <div class="setrow"><label>码率</label>
+        <select class="combo sm"><option>4 Mbps</option><option selected>8 Mbps</option><option>16 Mbps</option><option>24 Mbps</option></select>
+      </div>
+
+      <h3>批注</h3>
+      <div class="setrow"><label>默认颜色</label>
+        <span class="mini-dots">
+          <button class="sel" style="background:#E53935"></button>
+          <button style="background:#FFB300"></button>
+          <button style="background:#43A047"></button>
+          <button style="background:#1E88E5"></button>
+          <button style="background:#FFFFFF"></button>
+        </span>
+      </div>
+      <div class="setrow"><label>默认粗细</label><input type="range" min="2" max="12" value="4"></div>
+      <div class="setrow"><label>截图包含批注</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+
+      <h3>全局热键</h3>
+      <div class="setrow"><label>Ctrl+Alt+P 拍照</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+      <div class="setrow"><label>Ctrl+Alt+F 切换全屏</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
 
       <h3>功能状态</h3>
       <div id="features"></div>
