@@ -200,6 +200,25 @@ public sealed partial class MainWindow : Window
 
     private void OnFrameArrived(object? sender, SoftwareBitmap bitmap)
     {
+        // ══ 录像：把原始像素送进录制器（只在录制时做，避免无谓的内存拷贝）══
+        if (_recorder is { IsRecording: true } && !_recordFrameBusy)
+        {
+            _recordFrameBusy = true;
+            try
+            {
+                var bytes = _camera.GrabFrameBytes();
+                if (bytes is not null) _recorder.WriteFrame(bytes);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[VP] 录像写帧失败：{ex.Message}");
+            }
+            finally
+            {
+                _recordFrameBusy = false;
+            }
+        }
+
         // 背压：上一帧尚未上屏则直接丢弃本帧
         if (_framePending) return;
         _framePending = true;
@@ -590,6 +609,95 @@ public sealed partial class MainWindow : Window
         await dialog.ShowAsync();
     }
 
+    // ══════════════════════ 录像 ══════════════════════
+
+    private RecordingService? _recorder;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _recordTimer;
+    private volatile bool _recordFrameBusy;
+
+    private void Record_Click(object sender, RoutedEventArgs e)
+    {
+        if (_recorder is { IsRecording: true })
+        {
+            StopRecording();
+            return;
+        }
+
+        StartRecording();
+    }
+
+    private void StartRecording()
+    {
+        if (!Vm.IsPreviewing)
+        {
+            Vm.SetStatus("录像：请先连接设备并开始预览");
+            return;
+        }
+
+        // 用当前帧尺寸作为录制分辨率
+        var probe = _camera.GrabStill();
+        if (probe is null)
+        {
+            Vm.SetStatus("录像：当前没有可用画面");
+            return;
+        }
+
+        int width = probe.PixelWidth;
+        int height = probe.PixelHeight;
+        probe.Dispose();
+
+        string dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+            "视频展台", "录像");
+        string path = Path.Combine(dir, $"录像_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
+
+        _recorder ??= new RecordingService();
+
+        if (!_recorder.Start(path, width, height))
+        {
+            Vm.SetStatus("录像：启动失败（详见诊断日志）");
+            return;
+        }
+
+        // 按钮切到「停止」状态
+        RecordIcon.Glyph = "\uE71A";                       // Stop
+        RecordIcon.Foreground = new SolidColorBrush(Colors.Red);
+        RecordLabel.Text = "停止";
+
+        // 每秒刷新一次状态栏，显示录制时长
+        _recordTimer = DispatcherQueue.CreateTimer();
+        _recordTimer.Interval = TimeSpan.FromSeconds(1);
+        _recordTimer.Tick += (_, _) =>
+        {
+            if (_recorder is { IsRecording: true })
+            {
+                Vm.SetStatus($"● 录像中 {_recorder.Duration:mm\\:ss}   ·   {Path.GetFileName(_recorder.OutputPath)}");
+            }
+        };
+        _recordTimer.Start();
+
+        Vm.SetStatus($"● 录像中 00:00   ·   {Path.GetFileName(path)}");
+    }
+
+    private void StopRecording()
+    {
+        _recordTimer?.Stop();
+        _recordTimer = null;
+
+        string? path = _recorder?.OutputPath;
+        _recorder?.Stop();
+
+        // 恢复按钮
+        RecordIcon.Glyph = "\uE714";
+        RecordIcon.ClearValue(FontIcon.ForegroundProperty);   // 回到主题默认前景色
+        RecordLabel.Text = "录像";
+
+        if (!string.IsNullOrEmpty(path))
+        {
+            Vm.SetStatus($"录像已保存：{Path.GetFileName(path)}");
+        }
+    }
+
     // ══════════════════════ 批注合成（烧录进截图） ══════════════════════
 
     /// <summary>
@@ -770,6 +878,11 @@ public sealed partial class MainWindow : Window
             if (_subclassProc is not null)
                 Win32.RemoveWindowSubclass(_hwnd, _subclassProc, 1);
         }
+
+        // 录制中直接关窗 → 先收尾，保证 MP4 的索引信息被写入
+        _recordTimer?.Stop();
+        _recorder?.Stop();
+        _recorder?.Dispose();
 
         _camera.FrameArrived -= OnFrameArrived;
         Vm.Dispose();

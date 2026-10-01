@@ -32,6 +32,12 @@ public interface ICameraService : IDisposable
 
     /// <summary>取当前帧的<b>副本</b>（拍照用，调用方负责 Dispose）。</summary>
     SoftwareBitmap? GrabStill();
+
+    /// <summary>
+    /// 取当前帧的 BGRA32 原始像素（录像用）。
+    /// <para>每次调用都会新建一个数组，调用方负责回收。</para>
+    /// </summary>
+    byte[]? GrabFrameBytes();
 }
 
 /// <summary>
@@ -567,6 +573,39 @@ public sealed class MediaFoundationCameraService : ICameraService
         catch (Exception ex)
         {
             Debug.WriteLine($"[VP-MF] 取静帧失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>取当前帧的 BGRA32 原始像素（录像用）。</summary>
+    public byte[]? GrabFrameBytes()
+    {
+        var bitmap = _bitmap;
+        if (bitmap is null) return null;
+
+        int len = _width * _height * 4;
+        if (len <= 0) return null;
+
+        var bytes = new byte[len];
+
+        try
+        {
+            using var locked = bitmap.LockBuffer(BitmapBufferAccessMode.Read);
+            using var reference = locked.CreateReference();
+
+            var access = (IMemoryBufferByteAccess)(object)reference;
+            unsafe
+            {
+                access.GetBuffer(out byte* src, out uint capacity);
+                int n = Math.Min(len, (int)capacity);
+                Marshal.Copy((IntPtr)src, bytes, 0, n);
+            }
+
+            return bytes;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP-MF] 取帧像素失败：{ex.Message}");
             return null;
         }
     }

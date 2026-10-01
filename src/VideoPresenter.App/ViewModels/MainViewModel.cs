@@ -275,8 +275,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         new() { Icon = "✅", Name = "旋转",       Detail = "顺时针 90° 循环" },
         new() { Icon = "✅", Name = "对比",       Detail = "左侧为选中素材、右侧为实时画面，并排查看" },
         new() { Icon = "✅", Name = "OCR",        Detail = "识别画面文字，结果可复制（需系统装有中文 OCR 语言包）" },
-
-        new() { Icon = "🚧", Name = "录像",       Detail = "视频录制尚未实现" },
+        new() { Icon = "✅", Name = "录像",       Detail = "录制为 MP4（H.264，系统自带编码器），保存到「图片\\视频展台\\录像」" },
     };
 
     // ───────────────────────── 命令 ─────────────────────────

@@ -213,13 +213,14 @@
                         </StackPanel>
                     </Button>
 
-                    <Button IsEnabled="False"
+                    <Button x:Name="RecordButton"
+                            Click="Record_Click"
                             Background="Transparent" BorderThickness="0"
                             Width="64" Height="58" Padding="0" CornerRadius="4"
-                            ToolTipService.ToolTip="即将推出：视频录制">
+                            ToolTipService.ToolTip="录像：把画面录制为 MP4（H.264）">
                         <StackPanel Spacing="4">
-                            <FontIcon Glyph="&#xE714;" FontSize="18"/>
-                            <TextBlock Text="录像" FontSize="11" HorizontalAlignment="Center"/>
+                            <FontIcon x:Name="RecordIcon" Glyph="&#xE714;" FontSize="18"/>
+                            <TextBlock x:Name="RecordLabel" Text="录像" FontSize="11" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Button>
 
