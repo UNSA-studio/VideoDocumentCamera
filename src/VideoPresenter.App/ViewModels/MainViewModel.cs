@@ -33,6 +33,21 @@ public sealed class SnapshotItem : ObservableObject
 }
 
 /// <summary>
+/// 一条功能状态（用于"设置"面板里集中展示）。
+/// <para>
+/// 存在的意义：界面上有些按钮是占位（尚未实现），有些是可用。
+/// 用户应该有一个地方能【一眼看清哪些能用、哪些还没做】，
+/// 而不是靠一个个去点、去猜。
+/// </para>
+/// </summary>
+public sealed class FeatureStatus
+{
+    public required string Icon { get; init; }     // ✅ 可用 / 🚧 未实现
+    public required string Name { get; init; }
+    public required string Detail { get; init; }
+}
+
+/// <summary>
 /// 主界面视图模型（WinUI 3）。
 ///
 /// <para>
@@ -222,6 +237,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </para>
     /// </summary>
     public string LogFilePathText => "诊断日志：" + Services.MediaFoundationCameraService.LogFilePath;
+
+    /// <summary>版本信息（设置面板里展示）。</summary>
+    public string VersionText => "视频展台 v1.0.0  ·  UNSA Studio";
+
+    /// <summary>
+    /// 功能状态清单（设置面板里展示）。
+    /// <para>
+    /// 诚实列出"已实现 / 尚未实现"，避免用户对着占位按钮反复尝试。
+    /// 每完成一项，把它从 🚧 改成 ✅ 即可。
+    /// </para>
+    /// </summary>
+    public ObservableCollection<FeatureStatus> Features { get; } = new()
+    {
+        new() { Icon = "✅", Name = "拍照",       Detail = "全局快捷键 Ctrl+Alt+P，PNG 无损保存到「图片\\视频展台」" },
+        new() { Icon = "✅", Name = "连拍",       Detail = "连续抓拍 3 张（间隔约 130 ms）" },
+        new() { Icon = "✅", Name = "素材管理",   Detail = "右侧栏：缩略图、删除、清空、打开文件夹" },
+        new() { Icon = "✅", Name = "全屏",       Detail = "Esc / F11 切换；全局快捷键 Ctrl+Alt+F" },
+        new() { Icon = "✅", Name = "窗口置顶",   Detail = "命令栏「置顶」按钮" },
+        new() { Icon = "✅", Name = "跟随系统配色", Detail = "深浅色与系统强调色自动同步，程序不提供主题开关" },
+        new() { Icon = "✅", Name = "设备热插拔", Detail = "命令栏「刷新」按钮重新扫描设备" },
+
+        new() { Icon = "🚧", Name = "批注",       Detail = "画布与笔迹功能尚未实现（当前按钮为占位）" },
+        new() { Icon = "🚧", Name = "对比",       Detail = "双画面并排预览尚未实现" },
+        new() { Icon = "🚧", Name = "录像",       Detail = "视频录制尚未实现" },
+        new() { Icon = "🚧", Name = "OCR",        Detail = "文字识别尚未实现" },
+        new() { Icon = "🚧", Name = "旋转",       Detail = "画面旋转尚未实现" },
+    };
 
     // ───────────────────────── 命令 ─────────────────────────
 

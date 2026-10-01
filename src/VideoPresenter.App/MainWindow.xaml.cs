@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.IO;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using VideoPresenter.App.Services;
 using VideoPresenter.App.ViewModels;
@@ -233,12 +235,91 @@ public sealed partial class MainWindow : Window
                 break;
 
             case nameof(MainViewModel.IsRightPanelOpen):
-                // 说明：ColumnDefinition 不是 FrameworkElement，
-            //   因此它的 Width 不能走 x:Bind（XAML 编译器会拒绝），
-            //   这里由代码直接联动，最稳。
-                if (RightPanelColumn is not null)
-                    RightPanelColumn.Width = Vm.RightPanelWidth;
+                AnimateRightPanel(Vm.IsRightPanelOpen);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// 素材栏的折叠 / 展开动画。
+    /// <para>
+    /// 为什么不用直接设 Visibility：那样是"啪"地一下消失/出现，非常生硬。
+    /// 这里对 Border.Width 做 240ms 缓动（GridLength 本身不可动画，所以要绕到 Width 上），
+    /// 折叠动画播完后再设 Collapsed，避免内容溢出。
+    /// </para>
+    /// </summary>
+    private void AnimateRightPanel(bool open)
+    {
+        if (RightPanel is null) return;
+
+        if (open) RightPanel.Visibility = Visibility.Visible;
+
+        var animation = new DoubleAnimation
+        {
+            To = open ? 252.0 : 0.0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(240)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
+            // Width 会影响布局，必须显式允许"依赖动画"，否则会被跳过
+            EnableDependentAnimation = true,
+        };
+
+        Storyboard.SetTarget(animation, RightPanel);
+        Storyboard.SetTargetProperty(animation, "Width");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(animation);
+
+        if (!open)
+        {
+            storyboard.Completed += (_, _) => RightPanel.Visibility = Visibility.Collapsed;
+        }
+
+        storyboard.Begin();
+    }
+
+    // ══════════════════════ 设置面板 ══════════════════════
+
+    private async void OpenSettings_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // ContentDialog 在 WinUI 3 中必须挂到 XamlRoot 上
+            SettingsDialog.XamlRoot = RootGrid.XamlRoot;
+            await SettingsDialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 打开设置失败：{ex.Message}");
+        }
+    }
+
+    private void OpenLogFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string dir = Path.GetDirectoryName(MediaFoundationCameraService.LogFilePath)!;
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 打开日志目录失败：{ex.Message}");
+        }
+    }
+
+    private void OpenLicense_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "https://github.com/UNSA-studio/VideoDocumentCamera/blob/main/LICENSE",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 打开许可页失败：{ex.Message}");
         }
     }
 
