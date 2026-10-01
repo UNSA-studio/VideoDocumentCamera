@@ -245,6 +245,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string VersionText => "视频展台 v1.0.0  ·  UNSA Studio";
 
     /// <summary>
+    /// 拍照帧的合成钩子。
+    /// <para>
+    /// 当画面上有批注时，View 在这里把「实时画面 + 批注」渲染成一张图，
+    /// 交给 ViewModel 保存 —— 这样批注才会被烧录进截图。
+    /// 返回 null 表示没有批注（那就用原始帧，保持全分辨率）。
+    /// </para>
+    /// </summary>
+    public Func<Task<SoftwareBitmap?>>? CaptureComposer { get; set; }
+
+    /// <summary>
     /// 功能状态清单（设置面板里展示）。
     /// <para>
     /// 诚实列出"已实现 / 尚未实现"，避免用户对着占位按钮反复尝试。
@@ -261,12 +271,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         new() { Icon = "✅", Name = "跟随系统配色", Detail = "深浅色与系统强调色自动同步，程序不提供主题开关" },
         new() { Icon = "✅", Name = "设备热插拔", Detail = "命令栏「刷新」按钮重新扫描设备" },
 
-        new() { Icon = "✅", Name = "批注",       Detail = "鼠标 / 触摸 / 手写笔均可；5 色 + 粗细可调；橡皮按笔删除；撤销 / 清空。⚠ 截图暂不含批注" },
-        new() { Icon = "✅", Name = "旋转",       Detail = "顺时针 90° 循环（90°/270° 时画面可能有留白，待细调）" },
+        new() { Icon = "✅", Name = "批注",       Detail = "鼠标 / 触摸 / 手写笔均可；5 色 + 粗细可调；橡皮按笔删除；撤销 / 清空；✔ 截图会包含批注" },
+        new() { Icon = "✅", Name = "旋转",       Detail = "顺时针 90° 循环" },
+        new() { Icon = "✅", Name = "对比",       Detail = "左侧为选中素材、右侧为实时画面，并排查看" },
+        new() { Icon = "✅", Name = "OCR",        Detail = "识别画面文字，结果可复制（需系统装有中文 OCR 语言包）" },
 
-        new() { Icon = "🚧", Name = "对比",       Detail = "双画面并排预览尚未实现" },
         new() { Icon = "🚧", Name = "录像",       Detail = "视频录制尚未实现" },
-        new() { Icon = "🚧", Name = "OCR",        Detail = "文字识别尚未实现" },
     };
 
     // ───────────────────────── 命令 ─────────────────────────
@@ -376,6 +386,30 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task CaptureAsync() => await SaveCurrentFrameAsync();
 
+    /// <summary>
+    /// 取得要保存的一帧。
+    /// <para>
+    /// 优先让 View 合成（画面上有批注时），失败或没有批注则退回相机原始帧。
+    /// </para>
+    /// </summary>
+    private async Task<SoftwareBitmap?> AcquireFrameAsync()
+    {
+        if (CaptureComposer is not null)
+        {
+            try
+            {
+                var composed = await CaptureComposer();
+                if (composed is not null) return composed;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[VP] 批注合成失败，回退到原始帧：{ex.Message}");
+            }
+        }
+
+        return _camera.GrabStill();
+    }
+
     private async Task BurstCaptureAsync()
     {
         for (int i = 0; i < 3; i++)
@@ -389,7 +423,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async Task SaveCurrentFrameAsync()
     {
         // GrabStill 返回副本，避免采集线程改写导致撕裂
-        using var still = _camera.GrabStill();
+        using var still = await AcquireFrameAsync();
         if (still is null)
         {
             StatusText = "当前没有可用画面";

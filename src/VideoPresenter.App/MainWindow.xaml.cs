@@ -74,6 +74,12 @@ public sealed partial class MainWindow : Window
         _camera.FrameArrived += OnFrameArrived;
 
         AppWindow.Closing += OnAppWindowClosing;
+
+        // 拍照时若画面上有批注，把批注一起渲染进截图
+        Vm.CaptureComposer = ComposeFrameWithAnnotationsAsync;
+
+        // 旋转 90°/270° 时需要重算画面尺寸（WinUI 没有 LayoutTransform）
+        PreviewContainer.SizeChanged += (_, _) => UpdateRotationLayout();
     }
 
     // ══════════════════════ 初始化 ══════════════════════
@@ -215,6 +221,9 @@ public sealed partial class MainWindow : Window
                 // 复用同一个 SoftwareBitmap 不断上屏 —— 零额外分配
                 await _previewSource.SetBitmapAsync(bitmap);
 
+                // 对比模式下，右侧的实时画面与主画面共用同一个帧源
+                CompareLiveImage.Source = _previewSource;
+
                 Vm.UpdateFrameInfo(bitmap.PixelWidth, bitmap.PixelHeight);
             }
             catch (Exception ex)
@@ -244,6 +253,10 @@ public sealed partial class MainWindow : Window
 
             case nameof(MainViewModel.IsAnnotating):
                 SetAnnotationMode(Vm.IsAnnotating);
+                break;
+
+            case nameof(MainViewModel.IsComparing):
+                SetCompareMode(Vm.IsComparing);
                 break;
         }
     }
@@ -456,6 +469,185 @@ public sealed partial class MainWindow : Window
     private void ExitAnnotation_Click(object sender, RoutedEventArgs e)
         => Vm.IsAnnotating = false;
 
+    // ══════════════════════ 对比 ══════════════════════
+
+    /// <summary>进入 / 退出对比模式（左：选中素材；右：实时画面）。</summary>
+    private void SetCompareMode(bool on)
+    {
+        if (on)
+        {
+            var snap = Vm.SelectedSnapshot;
+            if (snap is null)
+            {
+                Vm.SetStatus("对比模式：请先在右侧素材栏选择一张图片");
+                Vm.IsComparing = false;
+                return;
+            }
+
+            // 左侧加载素材原图
+            CompareSnapshotImage.Source = new BitmapImage { UriSource = new Uri(snap.FilePath) };
+
+            // 右侧用当前的实时帧
+            CompareLiveImage.Source = _previewSource;
+
+            CompareLayer.Visibility = Visibility.Visible;
+            Vm.SetStatus($"对比中：{snap.FileName}（左） ⟷ 实时画面（右）");
+        }
+        else
+        {
+            CompareLayer.Visibility = Visibility.Collapsed;
+            CompareSnapshotImage.Source = null;
+            CompareLiveImage.Source = null;
+        }
+    }
+
+    // ══════════════════════ OCR ══════════════════════
+
+    private async void Ocr_Click(object sender, RoutedEventArgs e)
+    {
+        var frame = _camera.GrabStill();
+        if (frame is null)
+        {
+            Vm.SetStatus("OCR：当前没有可用画面");
+            return;
+        }
+
+        try
+        {
+            // 优先中文，其次跟随系统，最后英文。
+            // 具体能用哪种，取决于系统是否安装了对应的 OCR 语言包。
+            var engine =
+                Windows.Media.Ocr.OcrEngine.TryCreateFromLanguage(new Windows.Globalization.Language("zh-Hans"))
+                ?? Windows.Media.Ocr.OcrEngine.TryCreateFromUserProfileLanguages()
+                ?? Windows.Media.Ocr.OcrEngine.TryCreateFromLanguage(new Windows.Globalization.Language("en-US"));
+
+            if (engine is null)
+            {
+                await ShowTextDialogAsync("OCR 不可用",
+                    "系统未安装任何 OCR 语言包。\n\n" +
+                    "可到「设置 → 时间和语言 → 语言和区域」中，\n" +
+                    "为中文或英文语言添加「光学字符识别」可选功能，然后重试。");
+                return;
+            }
+
+            Vm.SetStatus($"OCR 识别中…（语言：{engine.RecognizerLanguage.DisplayName}）");
+
+            var result = await engine.RecognizeAsync(frame);
+            string text = result?.Text ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                await ShowTextDialogAsync("OCR 结果",
+                    "未识别到文字。\n\n提示：让文字尽量占满画面、光线均匀、避免反光。");
+                Vm.SetStatus("OCR 完成：未识别到文字");
+            }
+            else
+            {
+                // 顺手复制到剪贴板，方便直接粘贴到课件里
+                try
+                {
+                    var dp = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                    dp.SetText(text);
+                    Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(dp);
+                }
+                catch { /* 剪贴板被占用时忽略 */ }
+
+                await ShowTextDialogAsync("OCR 结果（已复制到剪贴板）", text);
+                Vm.SetStatus($"OCR 完成：识别到 {text.Length} 个字符，已复制到剪贴板");
+            }
+        }
+        catch (Exception ex)
+        {
+            Vm.SetStatus($"OCR 失败：{ex.Message}");
+            Debug.WriteLine($"[VP] OCR 失败：{ex}");
+        }
+        finally
+        {
+            frame.Dispose();
+        }
+    }
+
+    /// <summary>弹出一个可选中 / 复制的文本对话框。</summary>
+    private async Task ShowTextDialogAsync(string title, string text)
+    {
+        var box = new TextBox
+        {
+            Text = text,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 160,
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = new ScrollViewer { Content = box, MaxHeight = 420 },
+            CloseButtonText = "关闭",
+            XamlRoot = RootGrid.XamlRoot,
+        };
+
+        await dialog.ShowAsync();
+    }
+
+    // ══════════════════════ 批注合成（烧录进截图） ══════════════════════
+
+    /// <summary>
+    /// 把「实时画面 + 批注」渲染成一张位图，交给 ViewModel 保存。
+    /// <para>
+    /// 没有批注时返回 null —— 调用方会用相机原始帧（保持全分辨率）。
+    /// 有批注时用 RenderTargetBitmap，分辨率等于预览控件在屏幕上的实际尺寸。
+    /// </para>
+    /// </summary>
+    private async Task<SoftwareBitmap?> ComposeFrameWithAnnotationsAsync()
+    {
+        if (_annotations.Count == 0) return null;
+
+        var rtb = new RenderTargetBitmap();
+        await rtb.RenderAsync(PreviewContainer);
+
+        var pixels = await rtb.GetPixelsAsync();
+
+        return SoftwareBitmap.CreateCopyFromBuffer(
+            pixels,
+            BitmapPixelFormat.Bgra8,
+            rtb.PixelWidth,
+            rtb.PixelHeight,
+            BitmapAlphaMode.Premultiplied);
+    }
+
+    // ══════════════════════ 旋转尺寸补偿 ══════════════════════
+
+    /// <summary>
+    /// 旋转 90° / 270° 时的尺寸补偿。
+    /// <para>
+    /// WinUI 没有 WPF 的 LayoutTransform，RenderTransform 不参与布局测量，
+    /// 所以旋转后画面仍按「原宽 × 原高」的比例做 Uniform 缩放，视觉上会留白。
+    /// 这里把 Image 的布局尺寸交换一下，让 Uniform 按旋转后的比例计算。
+    /// </para>
+    /// </summary>
+    private void UpdateRotationLayout()
+    {
+        bool swap = Math.Abs(_rotationAngle % 180) == 90;
+
+        if (swap)
+        {
+            double w = PreviewContainer.ActualWidth;
+            double h = PreviewContainer.ActualHeight;
+
+            if (w <= 0 || h <= 0) return;
+
+            PreviewSurface.Width = h;
+            PreviewSurface.Height = w;
+        }
+        else
+        {
+            // 回到自动尺寸
+            PreviewSurface.Width = double.NaN;
+            PreviewSurface.Height = double.NaN;
+        }
+    }
+
     // ══════════════════════ 旋转 ══════════════════════
 
     /// <summary>顺时针旋转 90°（0° → 90° → 180° → 270° 循环）。</summary>
@@ -464,13 +656,12 @@ public sealed partial class MainWindow : Window
         _rotationAngle = (_rotationAngle + 90) % 360;
         PreviewRotate.Angle = _rotationAngle;
 
+        // 90°/270° 时需要交换画面布局尺寸，否则会留白
+        UpdateRotationLayout();
+
         Vm.SetStatus(_rotationAngle == 0
             ? "画面方向：正常"
             : $"画面方向：已旋转 {_rotationAngle:0}°");
-
-        // ⚠ 已知限制：WinUI 没有 WPF 的 LayoutTransform，RenderTransform 不参与布局测量，
-        //   所以旋转 90° / 270° 时画面不会自动交换宽高 —— 可能出现留白。
-        //   后续可用「按旋转后的宽高比重算 Stretch」来消除，属于细调项。
     }
 
     // ══════════════════════ 设置面板 ══════════════════════

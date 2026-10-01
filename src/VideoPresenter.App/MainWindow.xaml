@@ -135,8 +135,7 @@
                         VerticalAlignment="Center">
 
                 <ToggleButton IsChecked="{x:Bind Vm.IsComparing, Mode=TwoWay}"
-                              IsEnabled="False"
-                              ToolTipService.ToolTip="即将推出：双画面并排预览">
+                              ToolTipService.ToolTip="对比：左侧选中素材，右侧实时画面">
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <FontIcon Glyph="&#xE8A9;" FontSize="13"/>
                         <TextBlock Text="对比"/>
@@ -229,8 +228,7 @@
                             Margin="0,6"/>
 
                     <ToggleButton IsChecked="{x:Bind Vm.IsComparing, Mode=TwoWay}"
-                                  IsEnabled="False"
-                                  ToolTipService.ToolTip="即将推出：双画面并排预览"
+                                  ToolTipService.ToolTip="对比：左侧选中素材，右侧实时画面"
                                   Background="Transparent" BorderThickness="0"
                                   Width="64" Height="58" Padding="0" CornerRadius="4">
                         <StackPanel Spacing="4">
@@ -249,10 +247,10 @@
                         </StackPanel>
                     </ToggleButton>
 
-                    <Button IsEnabled="False"
+                    <Button Click="Ocr_Click"
                             Background="Transparent" BorderThickness="0"
                             Width="64" Height="58" Padding="0" CornerRadius="4"
-                            ToolTipService.ToolTip="即将推出">
+                            ToolTipService.ToolTip="OCR：识别画面中的文字（结果可复制）">
                         <StackPanel Spacing="4">
                             <FontIcon Glyph="&#xE8A5;" FontSize="18"/>
                             <TextBlock Text="OCR" FontSize="11" HorizontalAlignment="Center"/>
@@ -409,6 +407,41 @@
                         <Button Click="ExitAnnotation_Click" Content="退出批注"/>
                     </StackPanel>
                 </Border>
+
+                <!--
+                    ══════════ 对比层 ══════════
+                    左：选中的素材（静态图）；右：实时画面。
+                    叠在最上层，开启时自然遮住单画面预览，无需改 PreviewSurface 的可见性。
+                -->
+                <Grid x:Name="CompareLayer" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0" Background="Black">
+                        <Image x:Name="CompareSnapshotImage" Stretch="Uniform"/>
+                        <Border HorizontalAlignment="Left" VerticalAlignment="Top"
+                                Margin="10" Padding="8,3" CornerRadius="4"
+                                Background="#66000000">
+                            <TextBlock Text="素材" FontSize="11" Foreground="#CCFFFFFF"/>
+                        </Border>
+                    </Grid>
+
+                    <Grid Grid.Column="1" Background="Black">
+                        <Image x:Name="CompareLiveImage" Stretch="Uniform"/>
+                        <Border HorizontalAlignment="Left" VerticalAlignment="Top"
+                                Margin="10" Padding="8,3" CornerRadius="4"
+                                Background="#66000000">
+                            <TextBlock Text="实时画面" FontSize="11" Foreground="#CCFFFFFF"/>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Column="0"
+                            Width="1"
+                            HorizontalAlignment="Right"
+                            Background="#44FFFFFF"/>
+                </Grid>
 
                 <!-- 未连接时的引导层（颜色同样来自系统主题） -->
                 <StackPanel HorizontalAlignment="Center"
