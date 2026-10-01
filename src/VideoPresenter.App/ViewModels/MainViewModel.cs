@@ -187,6 +187,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _statusText, value);
     }
 
+    /// <summary>供 View（如旋转、批注等纯 UI 操作）回写状态栏文本。</summary>
+    public void SetStatus(string text) => StatusText = text;
+
     public string DeviceText
     {
         get => _deviceText;
@@ -258,11 +261,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         new() { Icon = "✅", Name = "跟随系统配色", Detail = "深浅色与系统强调色自动同步，程序不提供主题开关" },
         new() { Icon = "✅", Name = "设备热插拔", Detail = "命令栏「刷新」按钮重新扫描设备" },
 
-        new() { Icon = "🚧", Name = "批注",       Detail = "画布与笔迹功能尚未实现（当前按钮为占位）" },
+        new() { Icon = "✅", Name = "批注",       Detail = "鼠标 / 触摸 / 手写笔均可；5 色 + 粗细可调；橡皮按笔删除；撤销 / 清空。⚠ 截图暂不含批注" },
+        new() { Icon = "✅", Name = "旋转",       Detail = "顺时针 90° 循环（90°/270° 时画面可能有留白，待细调）" },
+
         new() { Icon = "🚧", Name = "对比",       Detail = "双画面并排预览尚未实现" },
         new() { Icon = "🚧", Name = "录像",       Detail = "视频录制尚未实现" },
         new() { Icon = "🚧", Name = "OCR",        Detail = "文字识别尚未实现" },
-        new() { Icon = "🚧", Name = "旋转",       Detail = "画面旋转尚未实现" },
     };
 
     // ───────────────────────── 命令 ─────────────────────────

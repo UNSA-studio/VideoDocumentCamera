@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO;
+using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -10,8 +12,10 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using VideoPresenter.App.Services;
 using VideoPresenter.App.ViewModels;
+using Windows.Foundation;
 using Windows.Graphics;
 using Windows.Graphics.Imaging;
+using Windows.UI;
 
 namespace VideoPresenter.App;
 
@@ -237,6 +241,10 @@ public sealed partial class MainWindow : Window
             case nameof(MainViewModel.IsRightPanelOpen):
                 AnimateRightPanel(Vm.IsRightPanelOpen);
                 break;
+
+            case nameof(MainViewModel.IsAnnotating):
+                SetAnnotationMode(Vm.IsAnnotating);
+                break;
         }
     }
 
@@ -275,6 +283,192 @@ public sealed partial class MainWindow : Window
         }
 
         storyboard.Begin();
+    }
+
+    // ══════════════════════ 批注 ══════════════════════
+    //
+    //  WinUI 3 没有 InkCanvas（那是 UWP / WPF 的控件），所以笔迹要自己实现：
+    //     PointerPressed  → 新建一条 Polyline 并捕获指针
+    //     PointerMoved    → 往 Polyline 里追加点
+    //     PointerReleased → 结束这一笔
+    //  鼠标、触摸、手写笔走的是同一套 Pointer 事件，因此三种输入都支持。
+
+    private readonly List<Microsoft.UI.Xaml.Shapes.Polyline> _annotations = new();
+    private Microsoft.UI.Xaml.Shapes.Polyline? _currentStroke;
+    private uint _activePointerId;
+    private bool _eraserMode;
+    private Color _annotationColor = Colors.Red;
+    private double _rotationAngle;
+
+    /// <summary>进入 / 退出批注模式。</summary>
+    private void SetAnnotationMode(bool on)
+    {
+        AnnotationCanvas.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        AnnotationToolbar.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+
+        if (!on) EndStroke(null);
+    }
+
+    private void AnnotationCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(AnnotationCanvas);
+        _activePointerId = pt.PointerId;
+
+        // ── 橡皮擦：点中哪一笔就删哪一笔 ──
+        if (_eraserMode)
+        {
+            for (int i = _annotations.Count - 1; i >= 0; i--)
+            {
+                if (HitTestStroke(_annotations[i], pt.Position))
+                {
+                    AnnotationCanvas.Children.Remove(_annotations[i]);
+                    _annotations.RemoveAt(i);
+                    break;
+                }
+            }
+            return;
+        }
+
+        // 只响应主键：鼠标需要左键按下；触摸 / 笔尖天然是按下的
+        if (pt.PointerDevice.PointerDeviceType == PointerDeviceType.Mouse &&
+            !pt.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        _currentStroke = new Microsoft.UI.Xaml.Shapes.Polyline
+        {
+            Stroke = new SolidColorBrush(_annotationColor),
+            StrokeThickness = AnnotationThickness.Value,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+        };
+        _currentStroke.Points.Add(pt.Position);
+
+        AnnotationCanvas.Children.Add(_currentStroke);
+        _annotations.Add(_currentStroke);
+
+        AnnotationCanvas.CapturePointer(e.Pointer);
+    }
+
+    private void AnnotationCanvas_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_currentStroke is null) return;
+
+        var pt = e.GetCurrentPoint(AnnotationCanvas);
+        if (pt.PointerId != _activePointerId) return;
+
+        // 鼠标可能在按键松开后仍然送来 Moved，需要主动收尾
+        if (pt.PointerDevice.PointerDeviceType == PointerDeviceType.Mouse &&
+            !pt.Properties.IsLeftButtonPressed)
+        {
+            EndStroke(e);
+            return;
+        }
+
+        _currentStroke.Points.Add(pt.Position);
+    }
+
+    private void AnnotationCanvas_PointerReleased(object sender, PointerRoutedEventArgs e)
+        => EndStroke(e);
+
+    private void EndStroke(PointerRoutedEventArgs? e)
+    {
+        if (_currentStroke is null) return;
+
+        if (e is not null)
+        {
+            try { AnnotationCanvas.ReleasePointerCapture(e.Pointer); }
+            catch { /* 指针已释放 */ }
+        }
+
+        _currentStroke = null;
+    }
+
+    /// <summary>命中测试：点是否落在某条笔画的顶点附近（顶点足够密集，够用）。</summary>
+    private static bool HitTestStroke(Microsoft.UI.Xaml.Shapes.Polyline stroke, Point p, double tolerance = 10)
+    {
+        double t2 = tolerance * tolerance;
+
+        foreach (var v in stroke.Points)
+        {
+            double dx = v.X - p.X;
+            double dy = v.Y - p.Y;
+            if (dx * dx + dy * dy <= t2) return true;
+        }
+
+        return false;
+    }
+
+    private void PenButton_Click(object sender, RoutedEventArgs e)
+    {
+        _eraserMode = false;
+        PenButton.IsChecked = true;
+        EraserButton.IsChecked = false;
+    }
+
+    private void EraserButton_Click(object sender, RoutedEventArgs e)
+    {
+        _eraserMode = true;
+        EraserButton.IsChecked = true;
+        PenButton.IsChecked = false;
+    }
+
+    private void AnnotationColor_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string hex) return;
+
+        try
+        {
+            string s = hex.TrimStart('#');
+
+            byte r = Convert.ToByte(s.Substring(0, 2), 16);
+            byte g = Convert.ToByte(s.Substring(2, 2), 16);
+            byte b = Convert.ToByte(s.Substring(4, 2), 16);
+            byte a = s.Length >= 8 ? Convert.ToByte(s.Substring(6, 2), 16) : (byte)255;
+
+            _annotationColor = Color.FromArgb(a, r, g, b);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 解析批注颜色失败：{ex.Message}");
+        }
+    }
+
+    private void UndoAnnotation_Click(object sender, RoutedEventArgs e)
+    {
+        if (_annotations.Count == 0) return;
+
+        var last = _annotations[^1];
+        _annotations.RemoveAt(_annotations.Count - 1);
+        AnnotationCanvas.Children.Remove(last);
+    }
+
+    private void ClearAnnotation_Click(object sender, RoutedEventArgs e)
+    {
+        _annotations.Clear();
+        AnnotationCanvas.Children.Clear();
+    }
+
+    private void ExitAnnotation_Click(object sender, RoutedEventArgs e)
+        => Vm.IsAnnotating = false;
+
+    // ══════════════════════ 旋转 ══════════════════════
+
+    /// <summary>顺时针旋转 90°（0° → 90° → 180° → 270° 循环）。</summary>
+    private void Rotate_Click(object sender, RoutedEventArgs e)
+    {
+        _rotationAngle = (_rotationAngle + 90) % 360;
+        PreviewRotate.Angle = _rotationAngle;
+
+        Vm.SetStatus(_rotationAngle == 0
+            ? "画面方向：正常"
+            : $"画面方向：已旋转 {_rotationAngle:0}°");
+
+        // ⚠ 已知限制：WinUI 没有 WPF 的 LayoutTransform，RenderTransform 不参与布局测量，
+        //   所以旋转 90° / 270° 时画面不会自动交换宽高 —— 可能出现留白。
+        //   后续可用「按旋转后的宽高比重算 Stretch」来消除，属于细调项。
     }
 
     // ══════════════════════ 设置面板 ══════════════════════

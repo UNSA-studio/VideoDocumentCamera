@@ -144,8 +144,7 @@
                 </ToggleButton>
 
                 <ToggleButton IsChecked="{x:Bind Vm.IsAnnotating, Mode=TwoWay}"
-                              IsEnabled="False"
-                              ToolTipService.ToolTip="即将推出：画布与笔迹（当前尚未实现）">
+                              ToolTipService.ToolTip="批注：在画面上圈画">
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <FontIcon Glyph="&#xE70F;" FontSize="13"/>
                         <TextBlock Text="批注"/>
@@ -241,8 +240,7 @@
                     </ToggleButton>
 
                     <ToggleButton IsChecked="{x:Bind Vm.IsAnnotating, Mode=TwoWay}"
-                                  IsEnabled="False"
-                                  ToolTipService.ToolTip="即将推出：画布与笔迹（当前尚未实现）"
+                                  ToolTipService.ToolTip="批注：在画面上圈画（支持鼠标 / 触摸 / 手写笔）"
                                   Background="Transparent" BorderThickness="0"
                                   Width="64" Height="58" Padding="0" CornerRadius="4">
                         <StackPanel Spacing="4">
@@ -261,10 +259,10 @@
                         </StackPanel>
                     </Button>
 
-                    <Button IsEnabled="False"
+                    <Button Click="Rotate_Click"
                             Background="Transparent" BorderThickness="0"
                             Width="64" Height="58" Padding="0" CornerRadius="4"
-                            ToolTipService.ToolTip="即将推出">
+                            ToolTipService.ToolTip="顺时针旋转 90°（0° → 90° → 180° → 270°）">
                         <StackPanel Spacing="4">
                             <FontIcon Glyph="&#xE7AD;" FontSize="18"/>
                             <TextBlock Text="旋转" FontSize="11" HorizontalAlignment="Center"/>
@@ -298,11 +296,119 @@
             </Border>
 
             <!-- ③-B 中央实时画面 -->
-            <Grid Grid.Column="1" Background="Black">
+            <Grid x:Name="PreviewContainer" Grid.Column="1" Background="Black">
 
                 <Image x:Name="PreviewSurface"
                        Stretch="Uniform"
-                       Visibility="{x:Bind Vm.PreviewVisibility, Mode=OneWay}"/>
+                       Visibility="{x:Bind Vm.PreviewVisibility, Mode=OneWay}">
+                    <Image.RenderTransform>
+                        <RotateTransform x:Name="PreviewRotate" Angle="0"/>
+                    </Image.RenderTransform>
+                </Image>
+
+                <!--
+                    ══════════ 批注层 ══════════
+                    叠在画面之上。注意 Background="Transparent" 是【必须】的：
+                    透明且未设 Background 的元素不参与命中测试，
+                    鼠标 / 触摸事件一个都收不到。
+                -->
+                <Canvas x:Name="AnnotationCanvas"
+                        Background="Transparent"
+                        Visibility="Collapsed"
+                        PointerPressed="AnnotationCanvas_PointerPressed"
+                        PointerMoved="AnnotationCanvas_PointerMoved"
+                        PointerReleased="AnnotationCanvas_PointerReleased"
+                        PointerCanceled="AnnotationCanvas_PointerReleased"/>
+
+                <!-- ══════════ 批注工具栏（批注模式下浮现）══════════ -->
+                <Border x:Name="AnnotationToolbar"
+                        Visibility="Collapsed"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Bottom"
+                        Margin="0,0,0,24"
+                        Padding="10,8"
+                        CornerRadius="8"
+                        Background="{ThemeResource FlyoutBackgroundBrush}"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <Border.Shadow>
+                        <ThemeShadow/>
+                    </Border.Shadow>
+
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+
+                        <!-- 画笔 / 橡皮 -->
+                        <ToggleButton x:Name="PenButton"
+                                      IsChecked="True"
+                                      Click="PenButton_Click"
+                                      Width="36" Height="32" Padding="0"
+                                      ToolTipService.ToolTip="画笔">
+                            <FontIcon Glyph="&#xE70F;" FontSize="14"/>
+                        </ToggleButton>
+
+                        <ToggleButton x:Name="EraserButton"
+                                      Click="EraserButton_Click"
+                                      Width="36" Height="32" Padding="0"
+                                      ToolTipService.ToolTip="橡皮（点中哪一笔就删哪一笔）">
+                            <FontIcon Glyph="&#xE75C;" FontSize="14"/>
+                        </ToggleButton>
+
+                        <Border Width="1" Height="20"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                        <!-- 颜色 -->
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <Button Click="AnnotationColor_Click" Tag="#FFE53935"
+                                    Width="22" Height="22" Padding="0" CornerRadius="11"
+                                    Background="#E53935" BorderThickness="1" BorderBrush="#66FFFFFF"
+                                    ToolTipService.ToolTip="红色"/>
+                            <Button Click="AnnotationColor_Click" Tag="#FFFFB300"
+                                    Width="22" Height="22" Padding="0" CornerRadius="11"
+                                    Background="#FFB300" BorderThickness="1" BorderBrush="#66FFFFFF"
+                                    ToolTipService.ToolTip="橙色"/>
+                            <Button Click="AnnotationColor_Click" Tag="#FF43A047"
+                                    Width="22" Height="22" Padding="0" CornerRadius="11"
+                                    Background="#43A047" BorderThickness="1" BorderBrush="#66FFFFFF"
+                                    ToolTipService.ToolTip="绿色"/>
+                            <Button Click="AnnotationColor_Click" Tag="#FF1E88E5"
+                                    Width="22" Height="22" Padding="0" CornerRadius="11"
+                                    Background="#1E88E5" BorderThickness="1" BorderBrush="#66FFFFFF"
+                                    ToolTipService.ToolTip="蓝色"/>
+                            <Button Click="AnnotationColor_Click" Tag="#FFFFFFFF"
+                                    Width="22" Height="22" Padding="0" CornerRadius="11"
+                                    Background="#FFFFFF" BorderThickness="1" BorderBrush="#66FFFFFF"
+                                    ToolTipService.ToolTip="白色"/>
+                        </StackPanel>
+
+                        <Border Width="1" Height="20"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                        <!-- 粗细 -->
+                        <Slider x:Name="AnnotationThickness"
+                                Width="90"
+                                Minimum="2" Maximum="12" Value="4"
+                                StepFrequency="1"
+                                VerticalAlignment="Center"
+                                ToolTipService.ToolTip="笔迹粗细"/>
+
+                        <Border Width="1" Height="20"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                        <Button Click="UndoAnnotation_Click"
+                                Width="36" Height="32" Padding="0"
+                                ToolTipService.ToolTip="撤销上一笔">
+                            <FontIcon Glyph="&#xE7A7;" FontSize="14"/>
+                        </Button>
+
+                        <Button Click="ClearAnnotation_Click"
+                                Width="36" Height="32" Padding="0"
+                                ToolTipService.ToolTip="清空批注">
+                            <FontIcon Glyph="&#xE74D;" FontSize="14"/>
+                        </Button>
+
+                        <Button Click="ExitAnnotation_Click" Content="退出批注"/>
+                    </StackPanel>
+                </Border>
 
                 <!-- 未连接时的引导层（颜色同样来自系统主题） -->
                 <StackPanel HorizontalAlignment="Center"
