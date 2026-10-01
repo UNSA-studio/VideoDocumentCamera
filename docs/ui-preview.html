@@ -375,7 +375,7 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
         拍照
       </button>
       <button class="btn">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="8.5" height="10" rx="1.2"/><path d="M12.5 3v10"/><path d="M14.5 4.5v7"/></svg>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.2" y="5.2" width="9" height="7" rx="1.2"/><path d="M10.2 8.2l3.2-2.2v5.6l-3.2-2.2z"/><path d="M4.6 3.2h5.6"/></svg>
         连拍
       </button>
       <button class="btn">暂停 / 继续</button>
@@ -401,7 +401,8 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
         拍照
       </button>
       <button class="tool">
-        <svg viewBox="0 0 16 16"><rect x="2" y="3" width="8.5" height="10" rx="1.2"/><path d="M12.5 3v10M14.5 4.5v7"/></svg>
+        <!-- 连拍：一个大相机 + 后面叠影，表达"连拍多张" -->
+        <svg viewBox="0 0 16 16"><rect x="1.2" y="5.2" width="9" height="7" rx="1.2"/><path d="M10.2 8.2l3.2-2.2v5.6l-3.2-2.2z"/><path d="M4.6 3.2h5.6"/></svg>
         连拍
       </button>
       <button class="tool" id="tRec">
@@ -435,7 +436,9 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
         全屏
       </button>
       <button class="tool" id="tSet">
-        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>
+        <!-- 齿轮：内圆 + 外圈断续的"齿"。
+             ⚠ 之前这里画成了"圆心 + 8 条放射线"，视觉上完全是个太阳 —— 已修正 -->
+        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.3"/><circle cx="8" cy="8" r="5.1" stroke-dasharray="1.7 1.7"/></svg>
         设置
       </button>
     </div>
