@@ -469,7 +469,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     // JPEG 可以指定画质（设置里 60~100）
                     var props = new BitmapPropertySet
                     {
-                        ["ImageQuality"] = new BitmapTypedValue(Settings.JpegQuality / 100f, PropertyType.Single),
+                        ["ImageQuality"] = new BitmapTypedValue(Settings.JpegQuality / 100f, Windows.Foundation.PropertyType.Single),
                     };
                     encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, stream, props);
                 }

@@ -56,7 +56,6 @@ public sealed class RecordingService : IDisposable
 
     private System.Collections.Concurrent.BlockingCollection<byte[]>? _queue;
     private Thread? _writeThread;
-    private volatile bool _running;
     private long _droppedFrames;
 
     public bool IsRecording { get; private set; }
@@ -144,7 +143,6 @@ public sealed class RecordingService : IDisposable
 
                 // ④ 后台写入线程
                 _queue = new System.Collections.Concurrent.BlockingCollection<byte[]>(maxQueueFrames);
-                _running = true;
 
                 _writeThread = new Thread(WriteLoop)
                 {
@@ -204,7 +202,6 @@ public sealed class RecordingService : IDisposable
             if (!IsRecording) return;
 
             IsRecording = false;
-            _running = false;
 
             _queue?.CompleteAdding();
             thread = _writeThread;
