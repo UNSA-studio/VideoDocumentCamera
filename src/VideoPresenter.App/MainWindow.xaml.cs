@@ -329,8 +329,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // 只响应主键：鼠标需要左键按下；触摸 / 笔尖天然是按下的
-        if (pt.PointerDevice.PointerDeviceType == PointerDeviceType.Mouse &&
+        // 只响应主键：鼠标需要左键按下；触摸 / 笔尖天然是按下的。
+        // ⚠ WinUI 3 的 PointerPoint 【没有】 PointerDevice 属性（那是 UWP 版 API），
+        //   设备类型必须从 PointerRoutedEventArgs.Pointer 上取。
+        if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse &&
             !pt.Properties.IsLeftButtonPressed)
         {
             return;
@@ -360,7 +362,7 @@ public sealed partial class MainWindow : Window
         if (pt.PointerId != _activePointerId) return;
 
         // 鼠标可能在按键松开后仍然送来 Moved，需要主动收尾
-        if (pt.PointerDevice.PointerDeviceType == PointerDeviceType.Mouse &&
+        if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse &&
             !pt.Properties.IsLeftButtonPressed)
         {
             EndStroke(e);
