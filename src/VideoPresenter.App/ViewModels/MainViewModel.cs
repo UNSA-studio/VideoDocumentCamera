@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using VideoPresenter.App.Boot;
 using VideoPresenter.App.Services;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
@@ -77,10 +78,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _themeModeText = "跟随系统";
     private SnapshotItem? _selectedSnapshot;
 
+    /// <summary>应用设置（JSON 持久化，改动立即生效）。</summary>
+    public AppSettings Settings { get; }
+
     public MainViewModel(ICameraService camera)
     {
         _camera = camera;
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
+        Settings = AppSettings.Load();
 
         _camera.StatusChanged += OnCameraStatus;
 
@@ -227,10 +233,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     public string SnapshotCountText => Snapshots.Count.ToString();
 
-    /// <summary>启动耗时（体现"启动器 1 秒内出界面"）。</summary>
-    public string BootInfoText => BootSignal.Instance.HasSession
-        ? $"启动耗时 {BootSignal.Instance.ElapsedMs} ms"
-        : "开发模式";
+    /// <summary>启动耗时（体现"启动器 1 秒内出界面"；可在设置里关闭显示）。</summary>
+    public string BootInfoText
+    {
+        get
+        {
+            if (!Settings.ShowBootTime) return string.Empty;
+
+            return BootSignal.Instance.HasSession
+                ? $"启动耗时 {BootSignal.Instance.ElapsedMs} ms"
+                : "开发模式";
+        }
+    }
 
     /// <summary>
     /// 诊断日志的完整路径（显示在"未连接设备"的引导层里）。
@@ -325,8 +339,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 ? $"已发现 {Devices.Count} 个视频设备"
                 : "未发现视频设备，请检查 USB 连接与驱动";
 
-            // 只有一个设备时自动连接 —— 双击图标即可见画面
-            if (Devices.Count == 1 && SelectedDevice is null)
+            // 只有一个设备时自动连接（可在设置里关闭）
+            if (Settings.AutoConnectSingleDevice && Devices.Count == 1 && SelectedDevice is null)
                 SelectedDevice = Devices[0];
         }
         finally
@@ -371,13 +385,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     // ───────────────────────── 拍摄 ─────────────────────────
 
-    private static string SnapshotFolder
+    /// <summary>素材保存目录（由设置决定，留空则用默认的「图片\视频展台」）。</summary>
+    private string SnapshotFolder
     {
         get
         {
-            string dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-                "视频展台");
+            string dir = Settings.PhotoFolder;
+
+            if (string.IsNullOrWhiteSpace(dir))
+            {
+                dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                    "视频展台");
+            }
+
             Directory.CreateDirectory(dir);
             return dir;
         }
@@ -432,15 +453,50 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             var now = DateTime.Now;
-            string fileName = $"展台_{now:yyyyMMdd_HHmmss_fff}.png";
+
+            // ── 输出格式由设置决定（PNG 无损 / JPEG 体积小且可调质量）──
+            bool jpeg = Settings.IsJpeg;
+            string ext = jpeg ? ".jpg" : ".png";
+            string fileName = $"展台_{now:yyyyMMdd_HHmmss_fff}{ext}";
             string path = Path.Combine(SnapshotFolder, fileName);
 
-            // 用 WinRT PNG 编码器：无损保存，板书 / 试卷文本的最佳选择
             using (var stream = await FileRandomAccessStream.OpenAsync(path, FileAccessMode.ReadWrite))
             {
-                var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+                BitmapEncoder encoder;
+
+                if (jpeg)
+                {
+                    // JPEG 可以指定画质（设置里 60~100）
+                    var props = new BitmapPropertySet
+                    {
+                        ["ImageQuality"] = new BitmapTypedValue(Settings.JpegQuality / 100f, PropertyType.Single),
+                    };
+                    encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, stream, props);
+                }
+                else
+                {
+                    // PNG 无损：板书 / 试卷等文本内容的最佳选择
+                    encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+                }
+
                 encoder.SetSoftwareBitmap(still);
                 await encoder.FlushAsync();
+            }
+
+            // ── 可选：把文件放进剪贴板，方便直接粘进课件 ──
+            if (Settings.CopyPhotoToClipboard)
+            {
+                try
+                {
+                    var file = await StorageFile.GetFileFromPathAsync(path);
+                    var dp = new DataPackage();
+                    dp.SetStorageItems(new[] { file });
+                    Clipboard.SetContent(dp);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[VP] 复制到剪贴板失败：{ex.Message}");
+                }
             }
 
             Snapshots.Insert(0, new SnapshotItem

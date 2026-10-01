@@ -78,8 +78,105 @@ public sealed partial class MainWindow : Window
         // 拍照时若画面上有批注，把批注一起渲染进截图
         Vm.CaptureComposer = ComposeFrameWithAnnotationsAsync;
 
+        // 设置变化时实时生效（热键开关 / 批注默认值）
+        Vm.Settings.PropertyChanged += OnSettingsChanged;
+
+        // 把设置里的批注默认值应用到工具栏
+        ApplyInkSettings();
+
         // 旋转 90°/270° 时需要重算画面尺寸（WinUI 没有 LayoutTransform）
         PreviewContainer.SizeChanged += (_, _) => UpdateRotationLayout();
+    }
+
+    /// <summary>设置项变化时实时生效。</summary>
+    private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(AppSettings.HotkeyCaptureEnabled):
+            case nameof(AppSettings.HotkeyFullScreenEnabled):
+                ApplyHotKeySettings();
+                break;
+
+            case nameof(AppSettings.InkColor):
+            case nameof(AppSettings.InkThickness):
+                ApplyInkSettings();
+                break;
+        }
+    }
+
+    /// <summary>按设置注册 / 注销全局热键。</summary>
+    private void ApplyHotKeySettings()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+
+        // 先全部注销，再按开关重新注册
+        WindowApiService.UnregisterHotKey(_hwnd, WindowApiService.HotKeyCapture);
+        WindowApiService.UnregisterHotKey(_hwnd, WindowApiService.HotKeyFullScreen);
+
+        if (Vm.Settings.HotkeyCaptureEnabled)
+        {
+            WindowApiService.RegisterHotKey(_hwnd, WindowApiService.HotKeyCapture,
+                Win32.MOD_CONTROL | Win32.MOD_ALT, 0x50 /* P */);
+        }
+
+        if (Vm.Settings.HotkeyFullScreenEnabled)
+        {
+            WindowApiService.RegisterHotKey(_hwnd, WindowApiService.HotKeyFullScreen,
+                Win32.MOD_CONTROL | Win32.MOD_ALT, 0x46 /* F */);
+        }
+    }
+/// <summary>
+    /// 设备热插拔检测。
+    /// <para>
+    /// 原先只有手动「刷新」按钮。这里用轻量轮询：<b>只在当前没有任何设备时才重扫</b> ——
+    /// 这样把展台插上后会自动出现在下拉框里，而已有设备时不会白白消耗 CPU。
+    /// </para>
+    /// <para>
+    /// 之所以不用 WinRT 的 DeviceWatcher：unpackaged 应用里它需要额外的线程与事件订阅管理，
+    /// 而"数量变了就重扫"用轮询已经足够。
+    /// </para>
+    /// </summary>
+    private void StartDeviceWatcher()
+    {
+        if (_deviceTimer is not null) return;
+
+        _deviceTimer = DispatcherQueue.CreateTimer();
+        _deviceTimer.Interval = TimeSpan.FromSeconds(3);
+        _deviceTimer.Tick += (_, _) =>
+        {
+            if (!Vm.Settings.AutoDetectDevices) return;
+
+            // 已经有设备就不再反复扫；只有"一个都没找到"时才持续重试
+            if (Vm.Devices.Count == 0 && Vm.RefreshDevicesCommand.CanExecute(null))
+            {
+                Vm.RefreshDevicesCommand.Execute(null);
+            }
+        };
+        _deviceTimer.Start();
+    }
+
+    /// <summary>把设置里的批注默认颜色 / 粗细应用到工具栏。</summary>
+    private void ApplyInkSettings()
+    {
+        try
+        {
+            string s = Vm.Settings.InkColor.TrimStart('#');
+            if (s.Length >= 8)
+            {
+                _annotationColor = Color.FromArgb(
+                    Convert.ToByte(s.Substring(0, 2), 16),
+                    Convert.ToByte(s.Substring(2, 2), 16),
+                    Convert.ToByte(s.Substring(4, 2), 16),
+                    Convert.ToByte(s.Substring(6, 2), 16));
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 解析设置里的批注颜色失败：{ex.Message}");
+        }
+
+        AnnotationThickness.Value = Vm.Settings.InkThickness;
     }
 
     // ══════════════════════ 初始化 ══════════════════════
@@ -120,10 +217,11 @@ public sealed partial class MainWindow : Window
         _subclassProc = SubclassProc;
         Win32.SetWindowSubclass(_hwnd, _subclassProc, 1, UIntPtr.Zero);
 
-        WindowApiService.RegisterHotKey(_hwnd, WindowApiService.HotKeyCapture,
-            Win32.MOD_CONTROL | Win32.MOD_ALT, 0x50 /* P */);
-        WindowApiService.RegisterHotKey(_hwnd, WindowApiService.HotKeyFullScreen,
-            Win32.MOD_CONTROL | Win32.MOD_ALT, 0x46 /* F */);
+        // 热键是否注册由设置决定（可在设置面板里开关）
+        ApplyHotKeySettings();
+
+        // 设备热插拔：没设备时自动重扫，插上就能自动出现
+        StartDeviceWatcher();
 
         UpdateThemeIndicator();
 
@@ -133,7 +231,9 @@ public sealed partial class MainWindow : Window
         //   而不是先看到一个 1180×760 的小窗再"啪"地跳成全屏。
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            SetFullScreen(true);
+            // 是否全屏由设置决定（默认开）
+            if (Vm.Settings.StartFullScreen) SetFullScreen(true);
+
             App.ReportWindowReady(this);
             Vm.Initialize();
         });
@@ -615,6 +715,9 @@ public sealed partial class MainWindow : Window
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _recordTimer;
     private volatile bool _recordFrameBusy;
 
+    /// <summary>设备热插拔轮询定时器。</summary>
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _deviceTimer;
+
     private void Record_Click(object sender, RoutedEventArgs e)
     {
         if (_recorder is { IsRecording: true })
@@ -653,7 +756,11 @@ public sealed partial class MainWindow : Window
 
         _recorder ??= new RecordingService();
 
-        if (!_recorder.Start(path, width, height))
+        // 帧率与码率取自设置
+        int fps = Vm.Settings.RecordFps;
+        int bitrate = Vm.Settings.RecordBitrateMbps * 1_000_000;
+
+        if (!_recorder.Start(path, width, height, fps, bitrate))
         {
             Vm.SetStatus("录像：启动失败（详见诊断日志）");
             return;
@@ -709,6 +816,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task<SoftwareBitmap?> ComposeFrameWithAnnotationsAsync()
     {
+        // 设置里可以关闭"截图包含批注"
+        if (!Vm.Settings.BurnAnnotationsIntoPhoto) return null;
+
         if (_annotations.Count == 0) return null;
 
         var rtb = new RenderTargetBitmap();
@@ -778,6 +888,9 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            // 打开前先把下拉框同步成当前设置值
+            SyncSettingsControls();
+
             // ContentDialog 在 WinUI 3 中必须挂到 XamlRoot 上
             SettingsDialog.XamlRoot = RootGrid.XamlRoot;
             await SettingsDialog.ShowAsync();
@@ -786,6 +899,89 @@ public sealed partial class MainWindow : Window
         {
             Debug.WriteLine($"[VP] 打开设置失败：{ex.Message}");
         }
+    }
+
+    /// <summary>把设置面板里的下拉框同步为当前设置值。</summary>
+    private void SyncSettingsControls()
+    {
+        RecordFpsBox.SelectedIndex = Vm.Settings.RecordFps switch
+        {
+            15 => 0,
+            60 => 2,
+            _ => 1,
+        };
+
+        RecordBitrateBox.SelectedIndex = Vm.Settings.RecordBitrateMbps switch
+        {
+            4 => 0,
+            16 => 2,
+            24 => 3,
+            _ => 1,
+        };
+    }
+
+    // ───────────────────────── 设置面板事件 ─────────────────────────
+
+    private async void PickPhotoFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FolderPicker();
+            picker.FileTypeFilter.Add("*");
+
+            // unpackaged 应用必须先把选择器关联到窗口句柄
+            WinRT.Interop.InitializeWithWindow.Initialize(picker,
+                WinRT.Interop.WindowNative.GetWindowHandle(this));
+
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is not null)
+            {
+                Vm.Settings.PhotoFolder = folder.Path;
+                Vm.SetStatus($"素材目录已改为：{folder.Path}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Vm.SetStatus($"选择文件夹失败：{ex.Message}");
+            Debug.WriteLine($"[VP] 选择文件夹失败：{ex}");
+        }
+    }
+
+    private void ResetPhotoFolder_Click(object sender, RoutedEventArgs e)
+    {
+        Vm.Settings.PhotoFolder = string.Empty;
+        Vm.SetStatus(@"素材目录已恢复为默认（图片\视频展台）");
+    }
+
+    private void RecordFps_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (RecordFpsBox is null) return;
+
+        Vm.Settings.RecordFps = RecordFpsBox.SelectedIndex switch
+        {
+            0 => 15,
+            2 => 60,
+            _ => 30,
+        };
+    }
+
+    private void RecordBitrate_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (RecordBitrateBox is null) return;
+
+        Vm.Settings.RecordBitrateMbps = RecordBitrateBox.SelectedIndex switch
+        {
+            0 => 4,
+            2 => 16,
+            3 => 24,
+            _ => 8,
+        };
+    }
+
+    private void SettingsInkColor_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string hex) return;
+        Vm.Settings.InkColor = hex.ToUpperInvariant();
     }
 
     private void OpenLogFolder_Click(object sender, RoutedEventArgs e)
@@ -878,6 +1074,10 @@ public sealed partial class MainWindow : Window
             if (_subclassProc is not null)
                 Win32.RemoveWindowSubclass(_hwnd, _subclassProc, 1);
         }
+
+        // 停止各类定时器
+        _deviceTimer?.Stop();
+        _deviceTimer = null;
 
         // 录制中直接关窗 → 先收尾，保证 MP4 的索引信息被写入
         _recordTimer?.Stop();
