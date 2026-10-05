@@ -88,6 +88,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         Settings = AppSettings.Load();
 
+        // 素材栏的初始展开状态由设置决定
+        IsRightPanelOpen = Settings.RightPanelOpenByDefault;
+
         _camera.StatusChanged += OnCameraStatus;
 
         RefreshDevicesCommand = new RelayCommand(RefreshDevices, () => !_isRefreshing);
@@ -233,6 +236,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     public string SnapshotCountText => Snapshots.Count.ToString();
 
+    /// <summary>设置面板里那行"上次设备"说明文字。</summary>
+    public string LastDeviceText
+    {
+        get
+        {
+            string name = Settings.LastDeviceName;
+            return string.IsNullOrWhiteSpace(name)
+                ? "尚未记录（成功连接一次设备后会自动记住）"
+                : $"上次设备：{name}";
+        }
+    }
+
     /// <summary>启动耗时（体现"启动器 1 秒内出界面"；可在设置里关闭显示）。</summary>
     public string BootInfoText
     {
@@ -376,6 +391,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         else if (SelectedDevice is not null)
         {
+            // 记住这次用的设备，下次可直接自动连接（可在设置里关闭）
+            if (Settings.RememberLastDevice) Settings.LastDeviceName = SelectedDevice.Name;
+
             StartPreview(SelectedDevice);
         }
     }
@@ -432,12 +450,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task BurstCaptureAsync()
     {
-        for (int i = 0; i < 3; i++)
+        int count = (int)Settings.BurstCount;   // 张数由设置决定（2~9）
+        int interval = 130;
+
+        for (int i = 0; i < count; i++)
         {
             await SaveCurrentFrameAsync();
             await Task.Delay(130);
         }
-        StatusText = "连拍完成（3 张）";
+        StatusText = $"连拍完成（{count} 张）";
     }
 
     private async Task SaveCurrentFrameAsync()
@@ -457,7 +478,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             // ── 输出格式由设置决定（PNG 无损 / JPEG 体积小且可调质量）──
             bool jpeg = Settings.IsJpeg;
             string ext = jpeg ? ".jpg" : ".png";
-            string fileName = $"展台_{now:yyyyMMdd_HHmmss_fff}{ext}";
+            string prefix = string.IsNullOrWhiteSpace(Settings.FileNamePrefix) ? "展台" : Settings.FileNamePrefix;
+            string fileName = $"{prefix}_{now:yyyyMMdd_HHmmss_fff}{ext}";
             string path = Path.Combine(SnapshotFolder, fileName);
 
             using (var stream = await FileRandomAccessStream.OpenAsync(path, FileAccessMode.ReadWrite))
@@ -483,7 +505,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 await encoder.FlushAsync();
             }
 
-            // ── 可选：把文件放进剪贴板，方便直接粘进课件 ──
+            // 拍照提示音（可在设置里开关）
+            if (Settings.CaptureSound)
+            {
+                try { Services.AppSounds.Capture(); }
+                catch (Exception ex) { Debug.WriteLine($"[VP] 提示音失败：{ex.Message}"); }
+            }
+
+            // 拍完自动打开文件夹
+            if (Settings.OpenFolderAfterCapture)
+            {
+                try { Process.Start("explorer.exe", SnapshotFolder); }
+                catch (Exception ex) { Debug.WriteLine($"[VP] 打开文件夹失败：{ex.Message}"); }
+            }
+
+            // 可选：把文件放进剪贴板，方便直接粘进课件
             if (Settings.CopyPhotoToClipboard)
             {
                 try

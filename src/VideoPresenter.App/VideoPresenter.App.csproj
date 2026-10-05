@@ -58,6 +58,13 @@
     <!-- Windows App SDK（WinUI 3）。可平滑升级到 1.7.x -->
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.240923002" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+
+    <!--
+      「随 Windows 启动」需要写 HKCU\...\Run。
+      WinUI 3（非 WPF/WinForms）项目不会自动带上这个包，
+      缺了会在编译期报 "找不到类型 Microsoft.Win32.Registry"。
+    -->
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>

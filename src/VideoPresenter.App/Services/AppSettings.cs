@@ -215,6 +215,123 @@ public sealed class AppSettings : ObservableObject
         set { if (SetProperty(ref _hotkeyFullScreenEnabled, value)) ScheduleSave(); }
     }
 
+    // ───────────────────── 拍照（进阶）─────────────────────
+
+    private string _fileNamePrefix = "展台";
+    /// <summary>素材文件名前缀（如「展台_20261006_143012.png」）。</summary>
+    public string FileNamePrefix
+    {
+        get => _fileNamePrefix;
+        set
+        {
+            // 文件名非法字符直接剔掉，避免写盘失败
+            string clean = new string((value ?? "").Where(c => !Path.GetInvalidFileNameChars().Contains(c)).ToArray()).Trim();
+            if (SetProperty(ref _fileNamePrefix, clean)) ScheduleSave();
+        }
+    }
+
+    private double _burstCount = 3;
+    /// <summary>连拍张数（2~9）。用 double 是因为 Slider.Value 是 double，x:Bind 不做隐式转换。</summary>
+    public double BurstCount
+    {
+        get => _burstCount;
+        set
+        {
+            double v = Math.Clamp(Math.Round(value), 2, 9);
+            if (SetProperty(ref _burstCount, v)) ScheduleSave();
+        }
+    }
+
+    private bool _captureSound;
+    /// <summary>拍照时播放提示音。</summary>
+    public bool CaptureSound
+    {
+        get => _captureSound;
+        set { if (SetProperty(ref _captureSound, value)) ScheduleSave(); }
+    }
+
+    private bool _openFolderAfterCapture;
+    /// <summary>拍照后自动打开素材文件夹。</summary>
+    public bool OpenFolderAfterCapture
+    {
+        get => _openFolderAfterCapture;
+        set { if (SetProperty(ref _openFolderAfterCapture, value)) ScheduleSave(); }
+    }
+
+    // ───────────────────── 录像（进阶）─────────────────────
+
+    private double _recordMaxMinutes;
+    /// <summary>单次录像时长上限（分钟）；0 表示不限制。同样用 double 以适配 Slider。</summary>
+    public double RecordMaxMinutes
+    {
+        get => _recordMaxMinutes;
+        set
+        {
+            double v = Math.Clamp(Math.Round(value), 0, 180);
+            if (SetProperty(ref _recordMaxMinutes, v)) ScheduleSave();
+        }
+    }
+
+    // ───────────────────── 批注（进阶）─────────────────────
+
+    private double _eraserThickness = 20;
+    /// <summary>橡皮擦大小。</summary>
+    public double EraserThickness
+    {
+        get => _eraserThickness;
+        set
+        {
+            double v = Math.Clamp(value, 8, 60);
+            if (SetProperty(ref _eraserThickness, v)) ScheduleSave();
+        }
+    }
+
+    // ───────────────────── 界面 ─────────────────────
+
+    private bool _rightPanelOpenByDefault = true;
+    /// <summary>启动时右侧素材栏是否展开。</summary>
+    public bool RightPanelOpenByDefault
+    {
+        get => _rightPanelOpenByDefault;
+        set { if (SetProperty(ref _rightPanelOpenByDefault, value)) ScheduleSave(); }
+    }
+
+    private bool _showGuides;
+    /// <summary>画面上显示三分线辅助格。</summary>
+    public bool ShowGuides
+    {
+        get => _showGuides;
+        set { if (SetProperty(ref _showGuides, value)) ScheduleSave(); }
+    }
+
+    // ───────────────────── 设备 ─────────────────────
+
+    private bool _rememberLastDevice = true;
+    /// <summary>记住上次使用的设备，下次自动连接它。</summary>
+    public bool RememberLastDevice
+    {
+        get => _rememberLastDevice;
+        set { if (SetProperty(ref _rememberLastDevice, value)) ScheduleSave(); }
+    }
+
+    private string _lastDeviceName = "";
+    /// <summary>上次成功连接的设备名。</summary>
+    public string LastDeviceName
+    {
+        get => _lastDeviceName;
+        set { if (SetProperty(ref _lastDeviceName, value ?? "")) ScheduleSave(); }
+    }
+
+    // ───────────────────── 启动 ─────────────────────
+
+    private bool _autoStartWithWindows;
+    /// <summary>随 Windows 启动（写 HKCU Run 项）。</summary>
+    public bool AutoStartWithWindows
+    {
+        get => _autoStartWithWindows;
+        set { if (SetProperty(ref _autoStartWithWindows, value)) ScheduleSave(); }
+    }
+
     // ───────────────────────── 读写 ─────────────────────────
 
     /// <summary>从磁盘读取设置；文件不存在或损坏时返回默认值。</summary>

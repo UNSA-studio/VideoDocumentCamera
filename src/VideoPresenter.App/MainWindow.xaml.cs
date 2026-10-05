@@ -234,6 +234,10 @@ public sealed partial class MainWindow : Window
             // 是否全屏由设置决定（默认开）
             if (Vm.Settings.StartFullScreen) SetFullScreen(true);
 
+            // 把存放在设置里的开关同步到实际状态（注册表 / 辅助线）
+            ApplyGuides();
+            ApplyAutoStart(Vm.Settings.AutoStartWithWindows);
+
             App.ReportWindowReady(this);
             Vm.Initialize();
         });
@@ -776,9 +780,16 @@ public sealed partial class MainWindow : Window
         _recordTimer.Interval = TimeSpan.FromSeconds(1);
         _recordTimer.Tick += (_, _) =>
         {
-            if (_recorder is { IsRecording: true })
+            if (_recorder is not { IsRecording: true }) return;
+
+            Vm.SetStatus($"● 录像中 {_recorder.Duration:mm\\:ss}   ·   {Path.GetFileName(_recorder.OutputPath)}");
+
+            // 时长上限（0 = 不限）：到点自动停，避免忘关录像把磁盘写满
+            double limitMinutes = Vm.Settings.RecordMaxMinutes;
+            if (limitMinutes > 0 && _recorder.Duration.TotalMinutes >= limitMinutes)
             {
-                Vm.SetStatus($"● 录像中 {_recorder.Duration:mm\\:ss}   ·   {Path.GetFileName(_recorder.OutputPath)}");
+                StopRecording();
+                Vm.SetStatus($"已达录像时长上限（{limitMinutes:0} 分钟），已自动停止");
             }
         };
         _recordTimer.Start();
@@ -884,21 +895,248 @@ public sealed partial class MainWindow : Window
 
     // ══════════════════════ 设置面板 ══════════════════════
 
+    /// <summary>
+    /// Esc 键：设置浮层开着就先关浮层（避免误触退出全屏）。
+    /// </summary>
+    private void OnEscapeInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (!_settingsOpen) return;
+
+        args.Handled = true;
+        HideSettings();
+    }
+
     private async void OpenSettings_Click(object sender, RoutedEventArgs e)
+    {
+        await ShowSettingsAsync();
+    }
+
+    // ══════════════════════ 设置浮层 ══════════════════════
+
+    private bool _settingsOpen;
+
+    /// <summary>
+    /// 打开设置浮层。
+    /// <para>
+    /// <b>每次打开都重置到动画起始状态</b> —— 这正是当初用 ContentDialog 的毛病：
+    /// 它复用同一份内容元素，而 XAML 过渡动画只在元素首次加载时播放，
+    /// 所以第二次打开起就没有动画了。自绘浮层由 Storyboard 显式驱动，不存在这个问题。
+    /// </para>
+    /// </summary>
+    private Task ShowSettingsAsync()
+    {
+        if (_settingsOpen) return Task.CompletedTask;
+        _settingsOpen = true;
+
+        SyncSettingsControls();
+
+        // ① 重置到起始状态
+        SettingsCardTransform.TranslateY = 24;
+        SettingsCardTransform.ScaleX = 0.98;
+        SettingsCardTransform.ScaleY = 0.98;
+        SettingsOverlay.Opacity = 0;
+        SettingsOverlay.Visibility = Visibility.Visible;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var sb = new Storyboard();
+
+        // ② 遮罩淡入
+        var fade = new DoubleAnimation
+        {
+            To = 1,
+            Duration = new Duration(TimeSpan.FromMilliseconds(180)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(fade, SettingsOverlay);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+        sb.Children.Add(fade);
+
+        // ③ 卡片上浮
+        var moveY = new DoubleAnimation
+        {
+            To = 0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(280)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(moveY, SettingsCardTransform);
+        Storyboard.SetTargetProperty(moveY, "(UIElement.RenderTransform).(CompositeTransform.TranslateY)");
+        sb.Children.Add(moveY);
+
+        // ④ 卡片轻微放大（0.98 → 1）
+        var scaleX = new DoubleAnimation
+        {
+            To = 1,
+            Duration = new Duration(TimeSpan.FromMilliseconds(280)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(scaleX, SettingsCardTransform);
+        Storyboard.SetTargetProperty(scaleX, "(UIElement.RenderTransform).(CompositeTransform.ScaleX)");
+        sb.Children.Add(scaleX);
+
+        var scaleY = new DoubleAnimation
+        {
+            To = 1,
+            Duration = new Duration(TimeSpan.FromMilliseconds(280)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(scaleY, SettingsCardTransform);
+        Storyboard.SetTargetProperty(scaleY, "(UIElement.RenderTransform).(CompositeTransform.ScaleY)");
+        sb.Children.Add(scaleY);
+
+        sb.Begin();
+
+        return Task.CompletedTask;
+    }
+
+    private void CloseSettings_Click(object sender, RoutedEventArgs e) => HideSettings();
+
+    private void SettingsOverlay_Tapped(object sender, TappedRoutedEventArgs e) => HideSettings();
+
+    /// <summary>关闭设置浮层（带出场动画）。</summary>
+    private void HideSettings()
+    {
+        if (!_settingsOpen) return;
+        _settingsOpen = false;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+        var sb = new Storyboard();
+
+        var fade = new DoubleAnimation
+        {
+            To = 0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(150)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(fade, SettingsOverlay);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+        sb.Children.Add(fade);
+
+        var moveY = new DoubleAnimation
+        {
+            To = 16,
+            Duration = new Duration(TimeSpan.FromMilliseconds(150)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(moveY, SettingsCardTransform);
+        Storyboard.SetTargetProperty(moveY, "(UIElement.RenderTransform).(CompositeTransform.TranslateY)");
+        sb.Children.Add(moveY);
+
+        sb.Completed += (_, _) =>
+        {
+            // 动画播放期间用户可能又点开了，别把新打开的浮层收掉
+            if (!_settingsOpen) SettingsOverlay.Visibility = Visibility.Collapsed;
+        };
+
+        sb.Begin();
+    }
+
+    /// <summary>把「可调项」全部恢复默认（不动"上次设备"这类记忆值）。</summary>
+    private async void ResetAllSettings_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            // 打开前先把下拉框同步成当前设置值
+            var confirm = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot,
+                Title = "恢复默认设置",
+                Content = "所有可调设置项将回到出厂默认值，此操作不可撤销。",
+                PrimaryButtonText = "恢复",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+            var s = Vm.Settings;
+
+            s.StartFullScreen = true;
+            s.AutoConnectSingleDevice = true;
+            s.AutoDetectDevices = true;
+            s.ShowBootTime = true;
+
+            s.PhotoFormat = "PNG";
+            s.JpegQuality = 92;
+            s.CopyPhotoToClipboard = false;
+            s.PhotoFolder = string.Empty;
+            s.FileNamePrefix = "展台";
+            s.BurstCount = 3;
+            s.CaptureSound = false;
+            s.OpenFolderAfterCapture = false;
+
+            s.RecordFps = 30;
+            s.RecordBitrateMbps = 8;
+            s.RecordMaxMinutes = 0;
+
+            s.InkColor = "#FFE53935";
+            s.InkThickness = 4;
+            s.EraserThickness = 20;
+            s.BurnAnnotationsIntoPhoto = true;
+
+            s.HotkeyCaptureEnabled = true;
+            s.HotkeyFullScreenEnabled = true;
+
+            s.RightPanelOpenByDefault = true;
+            s.ShowGuides = false;
+            s.RememberLastDevice = true;
+
+            s.AutoStartWithWindows = false;
+
+            // 立即把副作用同步出去（这些不是绑定能覆盖的）
+            ApplyAutoStart(false);
+            ApplyInkSettings();
+            ApplyGuides();
             SyncSettingsControls();
 
-            // ContentDialog 在 WinUI 3 中必须挂到 XamlRoot 上
-            SettingsDialog.XamlRoot = RootGrid.XamlRoot;
-            await SettingsDialog.ShowAsync();
+            Vm.SetStatus("设置已恢复为默认值");
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 打开设置失败：{ex.Message}");
+            Debug.WriteLine($"[VP] 恢复默认设置失败：{ex}");
         }
+    }
+
+    /// <summary>「随 Windows 启动」开关：写 / 删 HKCU 下的 Run 项。</summary>
+    private void AutoStart_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is ToggleSwitch sw) ApplyAutoStart(sw.IsOn);
+    }
+
+    private void ApplyAutoStart(bool enable)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+
+            if (key is null) return;
+
+            const string valueName = "VideoPresenter";
+
+            if (enable)
+            {
+                // 自启动直接拉起主程序本体，跳过启动器（开机时不需要看那 380ms 的进度条）
+                string exe = Path.Combine(AppContext.BaseDirectory, "VideoPresenter.exe");
+                key.SetValue(valueName, $"\"{exe}\"");
+                Vm.SetStatus("已设置随 Windows 启动");
+            }
+            else
+            {
+                key.DeleteValue(valueName, throwOnMissingValue: false);
+                Vm.SetStatus("已取消随 Windows 启动");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 设置开机自启失败：{ex.Message}");
+            Vm.SetStatus($"设置开机自启失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>显示 / 隐藏三分线辅助格。</summary>
+    private void ApplyGuides()
+    {
+        if (GuidesLayer is null) return;
+        GuidesLayer.Visibility = Vm.Settings.ShowGuides ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>把设置面板里的下拉框同步为当前设置值。</summary>
