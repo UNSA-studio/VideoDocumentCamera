@@ -350,7 +350,14 @@ $bannedResourceNames = @(
     'AltMediumLowBrush'
 )
 
-$xamlFiles = @(Get-ChildItem -Path $appSrcDir -Recurse -Filter '*.xaml' -ErrorAction SilentlyContinue)
+# 注意两个坑：
+#   ① -Filter '*.xaml' 在 Windows 上会把名为 Microsoft.UI.Xaml 的【目录】也匹配进来，
+#      必须加 -File 只取文件；
+#   ② bin / obj 里是编译产物，不该参与校验。
+$xamlFiles = @(
+    Get-ChildItem -Path $appSrcDir -Recurse -Filter '*.xaml' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' }
+)
 $bannedHits = New-Object System.Collections.Generic.List[string]
 
 foreach ($xaml in $xamlFiles)
