@@ -35,11 +35,6 @@
 
     <Grid x:Name="RootGrid" Background="Transparent">
 
-        <Grid.KeyboardAccelerators>
-            <!-- Esc：设置浮层开着就先关浮层 -->
-            <KeyboardAccelerator Key="Escape" Invoked="OnEscapeInvoked"/>
-        </Grid.KeyboardAccelerators>
-
         <!--
             键盘快捷键（窗口有焦点时生效）：
               Esc / F11 —— 切换全屏

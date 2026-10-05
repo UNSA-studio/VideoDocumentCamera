@@ -269,6 +269,17 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        // Esc：设置浮层开着就先关浮层（优先于"退出全屏"）。
+        // 用窗口消息而不是 XAML 的 KeyboardAccelerator —— 后者在浮层与焦点元素之间
+        // 容易互相干扰（加速器作用域、Popup 焦点），窗口级消息最直接可靠。
+        if (uMsg == 0x0100 /* WM_KEYDOWN */
+            && wParam.ToInt32() == 0x1B /* VK_ESCAPE */
+            && _settingsOpen)
+        {
+            HideSettings();
+            return IntPtr.Zero;
+        }
+
         return Win32.DefSubclassProc(hWnd, uMsg, wParam, lParam);
     }
 
@@ -894,17 +905,6 @@ public sealed partial class MainWindow : Window
     }
 
     // ══════════════════════ 设置面板 ══════════════════════
-
-    /// <summary>
-    /// Esc 键：设置浮层开着就先关浮层（避免误触退出全屏）。
-    /// </summary>
-    private void OnEscapeInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    {
-        if (!_settingsOpen) return;
-
-        args.Handled = true;
-        HideSettings();
-    }
 
     private async void OpenSettings_Click(object sender, RoutedEventArgs e)
     {
