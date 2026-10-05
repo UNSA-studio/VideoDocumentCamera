@@ -289,6 +289,100 @@ if ($doLauncher) {
     }
 }
 
+# ═══════════════════════ 阶段 1.5：XAML 资源名校验 ═══════════════════════
+#
+# 背景（这是一个真实踩过的坑，务必保留）：
+#
+#   XAML 里的 {ThemeResource X} 是【运行时】才解析的，编译期完全不报错。
+#   如果写了 UWP / WinUI 2 时代的资源名，编译照样成功、打包照样成功，
+#   但程序一启动就抛 XamlParseException 直接崩 —— 而 CI 全程显示绿色。
+#
+#   这一次就是栽在 `FlyoutBackgroundBrush` 上：主程序在 MainWindow..ctor()
+#   抛 "Cannot find a Resource with the Name/Key FlyoutBackgroundBrush"，
+#   用户看到的是一句冷冰冰的启动失败。
+#
+#   所以在打包前做一次静态拦截，把这类问题挡在上传之前。
+#
+Write-Step '①·5 校验 XAML 资源名（防 WinUI 2 残留）'
+
+$appSrcDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'src'
+
+# UWP / WinUI 2 时代独有的资源名 —— 在 WinUI 3 中【不存在】
+$bannedResourceNames = @(
+    'FlyoutBackgroundBrush'
+    'ApplicationPageBackgroundThemeBrush'
+    'SystemControlBackgroundAccentBrush'
+    'SystemControlBackgroundAltHighBrush'
+    'SystemControlBackgroundBaseLowBrush'
+    'SystemControlBackgroundChromeMediumLowBrush'
+    'SystemControlBackgroundListLowBrush'
+    'SystemControlDisabledBaseMediumLowBrush'
+    'SystemControlFocusVisualPrimaryBrush'
+    'SystemControlFocusVisualSecondaryBrush'
+    'SystemControlForegroundAccentBrush'
+    'SystemControlForegroundBaseHighBrush'
+    'SystemControlForegroundBaseMediumBrush'
+    'SystemControlForegroundBaseMediumHighBrush'
+    'SystemControlForegroundChromeWhiteBrush'
+    'SystemControlHighlightAccentBrush'
+    'SystemControlHighlightAltAccentBrush'
+    'SystemControlHighlightAltBaseHighBrush'
+    'SystemControlHighlightBaseHighBrush'
+    'SystemControlHighlightListAccentHighBrush'
+    'SystemControlHighlightListAccentLowBrush'
+    'SystemControlHighlightListAccentMediumBrush'
+    'SystemControlHighlightListLowBrush'
+    'SystemControlHighlightTransparentBrush'
+    'SystemControlHyperlinkTextBrush'
+    'SystemControlPageTextBaseHighBrush'
+    'SystemControlPageTextBaseMediumBrush'
+    'SystemControlRevealFocusVisualBrush'
+    'SystemControlTransientBorderBrush'
+    'SystemControlTransparentBrush'
+    'ChromeWhiteBrush'
+    'ChromeGrayBrush'
+    'BaseHighBrush'
+    'BaseLowBrush'
+    'BaseMediumBrush'
+    'BaseMediumHighBrush'
+    'AltHighBrush'
+    'AltMediumHighBrush'
+    'AltMediumLowBrush'
+)
+
+$xamlFiles = @(Get-ChildItem -Path $appSrcDir -Recurse -Filter '*.xaml' -ErrorAction SilentlyContinue)
+$bannedHits = New-Object System.Collections.Generic.List[string]
+
+foreach ($xaml in $xamlFiles)
+{
+    $text = Get-Content $xaml.FullName -Raw
+
+    foreach ($banned in $bannedResourceNames)
+    {
+        if ($text -match [regex]::Escape('{ThemeResource ' + $banned + '}'))
+        {
+            $bannedHits.Add("$($xaml.Name)  →  {ThemeResource $banned}")
+        }
+    }
+}
+
+if ($bannedHits.Count -gt 0)
+{
+    Write-Host ''
+    Write-Host '✗ XAML 中出现了 WinUI 3 不存在的资源名：' -ForegroundColor Red
+    foreach ($hit in $bannedHits) { Write-Host "    $hit" -ForegroundColor Red }
+    Write-Host ''
+    Write-Host '  这类引用【编译期不报错】，但运行时会让程序在启动瞬间崩溃。' -ForegroundColor Yellow
+    Write-Host '  请改用 WinUI 3 标准资源，例如：' -ForegroundColor Yellow
+    Write-Host '    TextFillColorPrimaryBrush / SecondaryBrush / TertiaryBrush' -ForegroundColor Yellow
+    Write-Host '    ControlFillColorDefaultBrush / SecondaryBrush' -ForegroundColor Yellow
+    Write-Host '    LayerFillColorDefaultBrush / CardBackgroundFillColorDefaultBrush' -ForegroundColor Yellow
+    Write-Host '    SolidBackgroundFillColorBaseBrush / DividerStrokeColorDefaultBrush' -ForegroundColor Yellow
+    throw 'XAML 资源名校验失败（见上）。'
+}
+
+Write-Host "✓ XAML 资源名校验通过（检查了 $($xamlFiles.Count) 个文件，无 WinUI 2 残留）" -ForegroundColor Green
+
 # ═══════════════════════ 阶段 2：发布主程序 ═══════════════════════
 
 if ($doApp) {

@@ -327,7 +327,7 @@
                         Margin="0,0,0,24"
                         Padding="10,8"
                         CornerRadius="8"
-                        Background="{ThemeResource FlyoutBackgroundBrush}"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                         BorderThickness="1">
                     <Border.Shadow>
