@@ -420,6 +420,8 @@ if ($doApp) {
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
             -p:DebugType=none `
+            -p:GenerateFullPaths=true `
+            -v:n `
             --nologo 2>&1
         $publishExit = $LASTEXITCODE
     }
@@ -430,11 +432,22 @@ if ($doApp) {
     Write-Host ('::warning::[诊断] dotnet publish 退出码 = ' + $publishExit + '，输出行数 = ' + @($publishOutput).Count)
 
     if ($publishExit -ne 0) {
-        Write-Host '  ── dotnet publish 输出尾部 ──' -ForegroundColor Yellow
-        foreach ($line in (@($publishOutput) | Select-Object -Last 80)) {
+        Write-Host '  ── dotnet publish 完整输出 ──' -ForegroundColor Yellow
+        $all = @($publishOutput)
+        Write-Host ('  （共 ' + $all.Count + ' 行）') -ForegroundColor Yellow
+
+        # 错误行优先（XamlCompiler / C# 编译错误都带 "error"）
+        foreach ($line in $all) {
             $text = ($line | Out-String).TrimEnd()
-            if ($text -match '\S') { Write-Host ('::error::' + $text) }
+            if ($text -match 'error|Error|错误') { Write-Host ('::error::' + $text) }
         }
+
+        # 再打尾部，保证上下文完整
+        foreach ($line in ($all | Select-Object -Last 60)) {
+            $text = ($line | Out-String).TrimEnd()
+            if ($text -match '\S') { Write-Host $text }
+        }
+
         throw "主程序发布失败（dotnet exit code = $publishExit）。"
     }
 

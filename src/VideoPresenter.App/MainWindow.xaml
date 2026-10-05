@@ -901,7 +901,7 @@
 
                         <StackPanel Spacing="4">
                             <TextBlock Text="文件名前缀" FontSize="12"/>
-                            <TextBox Text="{x:Bind Vm.Settings.FileNamePrefix, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            <TextBox Text="{x:Bind Vm.Settings.FileNamePrefix, Mode=TwoWay}"
                                      PlaceholderText="展台"
                                      MaxLength="32"/>
                         </StackPanel>
