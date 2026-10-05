@@ -316,7 +316,21 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
   position:absolute;inset:0;background:rgba(0,0,0,.28);
   display:none;align-items:center;justify-content:center;padding:16px;z-index:50;
 }
-.overlay.show{display:flex}
+.overlay.show{display:flex;animation:ovIn .18s ease-out}
+.overlay.show .dialog{animation:dlgIn .28s cubic-bezier(.2,.9,.3,1)}
+
+/* 入场动画：遮罩淡入 + 卡片上浮放大。
+   真实程序里对应 ShowSettingsAsync() 里的 Storyboard：
+   TranslateY 24→0、Scale 0.98→1、Opacity 0→1。
+   这也是改用自绘浮层的原因 —— ContentDialog 第二次打开起就没有动画。 */
+@keyframes ovIn{
+  from{opacity:0}
+  to{opacity:1}
+}
+@keyframes dlgIn{
+  from{opacity:0;transform:translateY(24px) scale(.98)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
 .dialog{
   width:100%;max-width:560px;max-height:88%;overflow:auto;
   background:var(--layer-bg);border:1px solid var(--border);border-radius:8px;
@@ -627,8 +641,28 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
       <div class="setrow"><label>Ctrl+Alt+P 拍照</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
       <div class="setrow"><label>Ctrl+Alt+F 切换全屏</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
 
-      <h3>功能状态</h3>
-      <div id="features"></div>
+      <h3>拍照（进阶）</h3>
+      <div class="setrow"><label>文件名前缀</label><input class="combo sm" style="padding:0 8px" value="展台"></div>
+      <div class="setrow"><label>连拍张数</label><input type="range" min="2" max="9" value="3"></div>
+      <div class="setrow"><label>拍照提示音</label><label class="sw"><input type="checkbox"><i></i></label></div>
+      <div class="setrow"><label>拍完自动打开文件夹</label><label class="sw"><input type="checkbox"><i></i></label></div>
+
+      <h3>录像（进阶）</h3>
+      <div class="setrow"><label>单次录像时长上限（0 = 不限）</label><input type="range" min="0" max="180" step="5" value="0"></div>
+
+      <h3>批注（进阶）</h3>
+      <p style="color:var(--text-2);font-size:11px">橡皮擦为「点中即删整笔」模式，无需设置粗细。</p>
+
+      <h3>界面</h3>
+      <div class="setrow"><label>启动时展开素材栏</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+      <div class="setrow"><label>显示三分线辅助格</label><label class="sw"><input type="checkbox"><i></i></label></div>
+
+      <h3>设备</h3>
+      <div class="setrow"><label>记住上次使用的设备</label><label class="sw"><input type="checkbox" checked><i></i></label></div>
+      <p style="color:var(--text-2);font-size:11px">尚未记录（成功连接一次设备后会自动记住）</p>
+
+      <h3>启动</h3>
+      <div class="setrow"><label>随 Windows 启动</label><label class="sw"><input type="checkbox"><i></i></label></div>
 
       <h3>诊断</h3>
       <p>%LOCALAPPDATA%\UNSA Studio\VideoDocumentCamera\logs\vdc.log</p>
@@ -660,28 +694,11 @@ body[data-theme="dark"]{background:linear-gradient(135deg,#15181c,#06070a)}
    交互（只为演示，不影响真实程序）
    ══════════════════════════════════════════════════════════════════════════ */
 
-// ── 功能状态清单（与 MainViewModel.Features 保持一致）──
-const FEATURES = [
-  ['✅','拍照','全局快捷键 Ctrl+Alt+P，PNG 无损保存到「图片\\视频展台」'],
-  ['✅','连拍','连续抓拍 3 张（间隔约 130 ms）'],
-  ['✅','录像','录制为 MP4（H.264），保存到「图片\\视频展台\\录像」'],
-  ['✅','批注','鼠标 / 触摸 / 手写笔均可；5 色 + 粗细可调；橡皮按笔删除；撤销 / 清空；截图会包含批注'],
-  ['✅','对比','左侧为选中素材、右侧为实时画面，并排查看'],
-  ['✅','OCR','识别画面文字，结果可复制（需系统装有中文 OCR 语言包）'],
-  ['✅','旋转','顺时针 90° 循环'],
-  ['✅','素材管理','右侧栏：缩略图、删除、清空、打开文件夹'],
-  ['✅','全屏','Esc / F11 切换；全局快捷键 Ctrl+Alt+F'],
-  ['✅','窗口置顶','命令栏「置顶」按钮'],
-  ['✅','跟随系统配色','深浅色与系统强调色自动同步，程序不提供主题开关'],
-  ['✅','设备热插拔','命令栏「刷新」按钮重新扫描设备'],
-];
-
 const $ = id => document.getElementById(id);
 
-// 渲染功能清单
-$('features').innerHTML = FEATURES.map(([i,n,d]) =>
-  `<div class="feat"><span class="i">${i}</span><span class="n">${n}</span><span class="d">${d}</span></div>`
-).join('');
+// 说明：原先这里渲染过一份只读的「功能状态」清单。
+// 真实程序里已经把它删掉了（用户明确反感"纯摆"的只读展示），
+// 预览页同步移除。
 
 // ── 主题切换（模拟"跟随系统"）──
 let dark = false;
