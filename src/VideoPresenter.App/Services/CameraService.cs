@@ -239,19 +239,28 @@ public sealed class MediaFoundationCameraService : ICameraService
         {
             _devices.Clear();
 
-            IMFAttributes? attributes = null;
+            IntPtr pAttributes = IntPtr.Zero;
 
             try
             {
-                if (MFCreateAttributes(out attributes, 1) < 0)
-                    throw new InvalidOperationException("MFCreateAttributes 失败");
+                int hrCreate = MFCreateAttributes(out pAttributes, 1);
+                Log($"[VP-MF] MFCreateAttributes → hr=0x{hrCreate:X8}, ptr=0x{pAttributes.ToInt64():X}");
+
+                if (hrCreate < 0 || pAttributes == IntPtr.Zero)
+                    throw new InvalidOperationException($"MFCreateAttributes 失败，HRESULT=0x{hrCreate:X8}");
 
                 Guid srcTypeKey = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE;
                 Guid vidcapValue = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID;
-                attributes.SetGUID(ref srcTypeKey, ref vidcapValue);
+
+                // 走 vtable 手动调用，绕开 COM 封送（见 SetAttributeGuid 的说明）
+                int hrSet = SetAttributeGuid(pAttributes, ref srcTypeKey, ref vidcapValue);
+                Log($"[VP-MF] SetGUID(SOURCE_TYPE=VIDCAP) → hr=0x{hrSet:X8}");
+
+                if (hrSet < 0)
+                    throw new InvalidOperationException($"设置 SOURCE_TYPE 属性失败，HRESULT=0x{hrSet:X8}");
 
                 // ── 枚举设备（手动遍历指针数组，见下方 P/Invoke 处的说明）──
-                int hr = MFEnumDeviceSources(attributes, out IntPtr pArray, out uint count);
+                int hr = MFEnumDeviceSources(pAttributes, out IntPtr pArray, out uint count);
 
                 Log($"[VP-MF] MFEnumDeviceSources → hr=0x{hr:X8}, count={count}, array=0x{pArray.ToInt64():X}");
 
@@ -319,7 +328,7 @@ public sealed class MediaFoundationCameraService : ICameraService
             }
             finally
             {
-                if (attributes is not null) Marshal.ReleaseComObject(attributes);
+                if (pAttributes != IntPtr.Zero) Marshal.Release(pAttributes);
             }
 
             StatusChanged?.Invoke(this, _devices.Count > 0
@@ -360,19 +369,23 @@ public sealed class MediaFoundationCameraService : ICameraService
         lock (_gate)
         {
             IntPtr source = IntPtr.Zero;
-            IMFAttributes? attributes = null;
+            IntPtr pAttributes = IntPtr.Zero;
 
             try
             {
-                if (MFCreateAttributes(out attributes, 1) < 0)
+                if (MFCreateAttributes(out pAttributes, 1) < 0 || pAttributes == IntPtr.Zero)
                     return Fail("MFCreateAttributes 失败");
 
                 Guid srcTypeKey = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE;
                 Guid vidcapValue = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID;
-                attributes.SetGUID(ref srcTypeKey, ref vidcapValue);
+
+                // 同 RefreshDevices：走 vtable 手动调用，绕开 COM 封送
+                int hrSet = SetAttributeGuid(pAttributes, ref srcTypeKey, ref vidcapValue);
+                if (hrSet < 0)
+                    return Fail($"设置 SOURCE_TYPE 属性失败，HRESULT=0x{hrSet:X8}");
 
                 // 同样手动遍历指针数组（理由见 MFEnumDeviceSources 的 P/Invoke 说明）
-                int hr = MFEnumDeviceSources(attributes, out IntPtr pArray, out uint count);
+                int hr = MFEnumDeviceSources(pAttributes, out IntPtr pArray, out uint count);
 
                 if (hr < 0 || pArray == IntPtr.Zero || device.Index < 0 || device.Index >= (int)count)
                 {
@@ -400,8 +413,11 @@ public sealed class MediaFoundationCameraService : ICameraService
                     Marshal.FreeCoTaskMem(pArray);
                 }
 
-                Marshal.ReleaseComObject(attributes);
-                attributes = null;
+                if (pAttributes != IntPtr.Zero)
+                {
+                    Marshal.Release(pAttributes);
+                    pAttributes = IntPtr.Zero;
+                }
 
                 if (hr < 0 || source == IntPtr.Zero)
                     return Fail("设备可能已被其它程序占用（如相机应用 / 其它展台软件）");
@@ -410,7 +426,7 @@ public sealed class MediaFoundationCameraService : ICameraService
                 var readerAttrs = CreateAttributesWith(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1);
 
                 hr = MFCreateSourceReaderFromMediaSource(source, readerAttrs, out _reader);
-                Marshal.ReleaseComObject(readerAttrs);
+                if (readerAttrs != IntPtr.Zero) Marshal.Release(readerAttrs);
                 Marshal.Release(source);
                 source = IntPtr.Zero;
 
@@ -444,7 +460,7 @@ public sealed class MediaFoundationCameraService : ICameraService
             catch (Exception ex)
             {
                 if (source != IntPtr.Zero) Marshal.Release(source);
-                if (attributes is not null) Marshal.ReleaseComObject(attributes);
+                if (pAttributes != IntPtr.Zero) Marshal.Release(pAttributes);
                 return Fail(ex.Message);
             }
         }
@@ -500,12 +516,16 @@ public sealed class MediaFoundationCameraService : ICameraService
         Debug.WriteLine("[VP-MF] 使用设备原生输出格式（按 1080p 处理）");
     }
 
-    private static IMFAttributes CreateAttributesWith(Guid key, uint value)
+    private static IntPtr CreateAttributesWith(Guid key, uint value)
     {
-        if (MFCreateAttributes(out var attrs, 1) < 0)
+        if (MFCreateAttributes(out var attrs, 1) < 0 || attrs == IntPtr.Zero)
             throw new InvalidOperationException("MFCreateAttributes 失败");
 
-        attrs.SetUINT32(ref key, value);
+        // 同 SetGUID：走 vtable 手动调用（SetUINT32 是接口内第 19 个 → 3+18=21）
+        int hr = SetAttributeUInt32(attrs, ref key, value);
+        if (hr < 0)
+            throw new InvalidOperationException($"SetUINT32 失败，HRESULT=0x{hr:X8}");
+
         return attrs;
     }
 
@@ -709,14 +729,59 @@ public sealed class MediaFoundationCameraService : ICameraService
     private static extern int MFShutdown();
 
     [DllImport("mfplat.dll", ExactSpelling = true)]
-    private static extern int MFCreateAttributes(out IMFAttributes ppMFAttributes, uint cInitialSize);
+    private static extern int MFCreateAttributes(out IntPtr ppMFAttributes, uint cInitialSize);
+
+    /// <summary>
+    /// 通过原始 vtable 调用 <c>IMFAttributes::SetGUID</c>。
+    ///
+    /// <para><b>为什么不用 C# 的 COM 接口封送</b></para>
+    /// <para>
+    /// 用 <c>[ComImport]</c> 接口调 <c>SetGUID</c> 看起来优雅，但实测会让
+    /// <c>MFEnumDeviceSources</c> 返回 <c>0x80070057 (E_INVALIDARG)</c> ——
+    /// 也就是说 MF 收到的那份 attributes 里【根本没有 SOURCE_TYPE 属性】，
+    /// 而 C# 侧不报任何错（SetGUID 的返回值我们当时也没检查）。
+    /// </para>
+    /// <para>
+    /// 现在改为：拿 IUnknown 指针 → 读 vtable → 取第 24 个槽位
+    /// （IUnknown 占 0..2，IMFAttributes 内 SetGUID 是第 22 个 → 3+21=24）
+    /// → 转成委托直接调。完全绕开封送，行为与 C++ 调用一致。
+    /// </para>
+    /// </summary>
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int SetGuidVtblFn(IntPtr pThis, ref Guid guidKey, ref Guid guidValue);
+
+    private static int SetAttributeGuid(IntPtr pAttributes, ref Guid key, ref Guid value)
+    {
+        Guid k = key;
+        Guid v = value;
+
+        IntPtr pVtbl = Marshal.ReadIntPtr(pAttributes);
+        IntPtr fn = Marshal.ReadIntPtr(pVtbl, 24 * IntPtr.Size);
+
+        var setGuid = Marshal.GetDelegateForFunctionPointer<SetGuidVtblFn>(fn);
+        return setGuid(pAttributes, ref k, ref v);
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int SetUInt32VtblFn(IntPtr pThis, ref Guid guidKey, uint unValue);
+
+    private static int SetAttributeUInt32(IntPtr pAttributes, ref Guid key, uint value)
+    {
+        Guid k = key;
+
+        IntPtr pVtbl = Marshal.ReadIntPtr(pAttributes);
+        IntPtr fn = Marshal.ReadIntPtr(pVtbl, 21 * IntPtr.Size);   // 3 + 18（SetUINT32）
+
+        var setUInt32 = Marshal.GetDelegateForFunctionPointer<SetUInt32VtblFn>(fn);
+        return setUInt32(pAttributes, ref k, value);
+    }
 
     [DllImport("mfplat.dll", ExactSpelling = true)]
     private static extern int MFCreateMediaType(out IMFMediaType ppMFType);
 
     [DllImport("mfreadwrite.dll", ExactSpelling = true)]
     private static extern int MFCreateSourceReaderFromMediaSource(
-        IntPtr pMediaSource, IMFAttributes? pAttributes, out IMFSourceReader ppSourceReader);
+        IntPtr pMediaSource, IntPtr pAttributes, out IMFSourceReader ppSourceReader);
 
     // ⚠ 关键：这里【不能】用 LPArray + SizeParamIndex 让 marshaler 自动转数组。
     //
@@ -731,7 +796,7 @@ public sealed class MediaFoundationCameraService : ICameraService
     //  因此退回最笨但最可靠的写法：拿 IntPtr，自己按指针宽度逐个读。
     [DllImport("mf.dll", ExactSpelling = true)]
     private static extern int MFEnumDeviceSources(
-        IMFAttributes pAttributes,
+        IntPtr pAttributes,
         out IntPtr pppSourceActivate,
         out uint pcSourceActivate);
 
