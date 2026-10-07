@@ -883,7 +883,7 @@
                     <!-- ⑤ 许可 -->
                     <StackPanel Spacing="4">
                         <TextBlock Text="许可" Style="{StaticResource BodyStrongTextBlockStyle}"/>
-                        <TextBlock Text="UNSA Studio 非商业许可 v1.0：源码公开、禁止商业用途；分发需保留署名与来源。"
+                        <TextBlock Text="源代码适用 PolyForm Noncommercial License 1.0.0：源码公开、禁止商业用途；分发需保留许可条款与署名声明。学校等教育机构的使用明确被允许。"
                                    FontSize="12"
                                    TextWrapping="Wrap"/>
                         <Button Content="查看完整许可协议" Click="OpenLicense_Click"/>

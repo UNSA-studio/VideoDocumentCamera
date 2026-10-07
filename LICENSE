@@ -1,145 +1,168 @@
-SPDX-License-Identifier: LicenseRef-UNSA-NC-1.0
-Copyright (C) 2026 UNSA Studio. All rights reserved.
+# PolyForm Noncommercial License 1.0.0
 
-UNSA Studio 非商业许可协议
-UNSA Studio Non-Commercial License
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
 
-版本 1.0
+Required Notice: Copyright (C) 2026 UNSA Studio
 
+## Acceptance
 
-────────────────────────────────────────────────────────────────────────
-  一分钟摘要（仅供快速理解，不构成许可条款本身）
-────────────────────────────────────────────────────────────────────────
+In order to get any license under these terms, you must agree to them as both strict obligations and conditions to all your licenses.
 
-  ✅ 你可以
-      · 查看、学习、研究本项目全部源代码
-      · 修改源代码，做自己的版本
-      · 在非商业场景下自由使用（个人、教学、科研、非营利组织内部）
-      · 在非商业场景下再分发原版或你的修改版
+## Copyright License
 
-  ❗ 你必须
-      · 保留版权声明与作者署名（注明来源于 UNSA Studio）
-      · 在显著位置标明你做了哪些修改
-      · 让你的衍生作品继续沿用本许可（不得改成更宽松的许可）
+The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose. However, you may only distribute the software according to [Distribution License](#distribution-license) and make changes or new works based on the software according to [Changes and New Works License](#changes-and-new-works-license).
 
-  ❌ 你不可以
-      · 将本项目（原版或修改版）用于任何商业用途
-      · 移除或遮盖任何版权、商标、作者标识
-      · 以你自己的名义发布本项目
-      · 附加任何法律或技术限制，阻止他人行使本许可授予的权利
+## Distribution License
 
-  商业用途需事先取得 UNSA Studio 的书面授权。
+The licensor grants you an additional copyright license to distribute copies of the software. Your license to distribute covers distributing the software with changes and new works permitted by [Changes and New Works License](#changes-and-new-works-license).
 
+## Notices
 
-────────────────────────────────────────────────────────────────────────
-  正式条款
-────────────────────────────────────────────────────────────────────────
+You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms or the URL for them above, as well as copies of any plain-text lines beginning with `Required Notice:` that the licensor provided with the software. For example:
 
-一、定义
+> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
 
-1.1 「本作品」指 视频展台（VideoPresenter / VideoDocumentCamera）
-    项目，包括其全部源代码、可执行文件、资源文件、文档及后续更新。
+## Changes and New Works License
 
-1.2 「许可方」指 UNSA Studio。
+The licensor grants you an additional copyright license to make changes and new works based on the software for any permitted purpose.
 
-1.3 「你」指行使本许可所授予权利的自然人或法人。
+## Patent License
 
-1.4 「非商业用途」指不以获取商业利益或金钱报酬为主要目的的使用。
-    下列情形属于非商业用途：
-      (a) 个人学习、研究与娱乐；
-      (b) 学校、科研机构的教学与学术研究；
-      (c) 非营利组织为自身使命而进行的内部使用；
-      (d) 以非营利目的向公众免费提供，且不附带任何商业推广。
-    下列情形属于商业用途（需另行授权）：
-      (e) 用于任何以营利为目的的产品、服务或经营活动；
-      (f) 作为付费商品或服务的一部分分发；
-      (g) 用于向客户交付的收费项目（含外包、集成、定制开发）；
-      (h) 在商业场所作为经营工具使用。
+The licensor grants you a patent license for the software that covers patent claims the licensor can license, or becomes able to license, that you would infringe by using the software.
 
+## Noncommercial Purposes
 
-二、授予的权利
+Any noncommercial purpose is a permitted purpose.
 
-2.1 在你就本作品遵守本协议全部条款的前提下，许可方授予你一项
-    全球范围、免许可费、非独占、不可再许可的权利，允许你：
+## Personal Uses
 
-    (a) 获取、阅读、学习、研究本作品的源代码；
-    (b) 复制本作品；
-    (c) 修改本作品，并基于本作品创作衍生作品；
-    (d) 在【非商业用途】范围内使用、运行本作品及其衍生作品；
-    (e) 在【非商业用途】范围内分发本作品及其衍生作品的副本。
+Personal use for research, experiment, and testing for the benefit of public knowledge, personal study, private entertainment, hobby projects, amateur pursuits, or religious observance, without any anticipated commercial application, is use for a permitted purpose.
 
-2.2 本许可不因使用方式（个人 / 组织）而收费。本作品免费提供。
+## Noncommercial Organizations
 
+Use by any charitable organization, educational institution, public research organization, public safety or health organization, environmental protection organization, or government institution is use for a permitted purpose regardless of the source of funding or obligations resulting from the funding.
 
-三、必须遵守的条件
+## Fair Use
 
-3.1 署名要求（保留来源）
-    你若分发本作品或其任何衍生作品，必须：
-    (a) 保留所有源代码文件中的版权声明与作者标识；
-    (b) 在显著位置注明本作品来源于 UNSA Studio；
-    (c) 提供本许可协议的完整副本；
-    (d) 在文档中明确说明你做出的修改内容与日期。
+You may have "fair use" rights for the software under the law. These terms do not limit them.
 
-3.2 相同许可（保留用途）
-    你的衍生作品必须继续使用本许可协议，不得改用限制更宽松的许可，
-    也不得附加任何额外限制。
+## No Other Rights
 
-3.3 不得移除权利标识
-    你不得移除、遮蔽或修改本作品中任何版权声明、商标、作者署名
-    或其他权利标识。
+These terms do not allow you to sublicense or transfer any of your licenses to anyone else, or prevent the licensor from granting licenses to anyone else. These terms do not imply any other licenses.
 
-3.4 不得冒充
-    你不得以自己（或第三方）的名义发布本作品原版，
-    不得暗示本作品由你创作或由许可方之外的第三方背书。
+## Patent Defense
+
+If you make any written claim that the software infringes or contributes to infringement of any patent, your patent license for the software granted under these terms ends immediately. If your company makes such a claim, your patent license ends immediately for work on behalf of your company.
+
+## Violations
+
+The first time you are notified in writing that you have violated any of these terms, or done anything with the software not covered by your licenses, your licenses can nonetheless continue if you come into full compliance with these terms, and take practical steps to correct past violations, within 32 days of receiving notice. Otherwise, all your licenses end immediately.
+
+## No Liability
+
+***As far as the law allows, the software comes as is, without any warranty or condition, and the licensor will not be liable to you for any damages arising out of these terms or the use or nature of the software, under any kind of legal claim.***
+
+## Definitions
+
+The **licensor** is the individual or entity offering these terms, and the **software** is the software the licensor makes available under these terms.
+
+**You** refers to the individual or entity agreeing to these terms.
+
+**Your company** is any legal entity, sole proprietorship, or other kind of organization that you work for, plus all organizations that have control over, are under the control of, or are under common control with that organization. **Control** means ownership of substantially all the assets of an entity, or the power to direct its management and policies by vote, contract, or otherwise. Control can be direct or indirect.
+
+**Your licenses** are all the licenses granted to you for the software under these terms.
+
+**Use** means anything you do with the software requiring one of your licenses.
 
 
-四、禁止商业用途
-
-4.1 未经许可方事先书面授权，你不得将本作品或其任何衍生作品用于
-    第 1.4 条所定义的商业用途。
-
-4.2 如需商业授权，请联系 UNSA Studio 洽谈。
+════════════════════════════════════════════════════════════════════════════
+  以下中文译文仅供参考，便于理解。
+  如有歧义，一律以本文件上半部分的英文原文为准。
+════════════════════════════════════════════════════════════════════════════
 
 
-五、保留的权利
+# PolyForm 非商业许可证 1.0.0（参考译文）
 
-5.1 本作品的所有权、著作权及其他知识产权，均归许可方所有。
-5.2 本许可仅授予使用权，不向你转让任何所有权或知识产权。
-5.3 许可方保留未在本协议中明确授予的一切权利。
-5.4 本作品中的第三方组件（如 .NET、Windows App SDK、WiX Toolset、
-    Inno Setup 等）各自遵循其自身的许可条款，本协议不改变你就
-    这些组件所享有的权利。
+## 接受
+
+为获得本条款下的任何许可，你必须同意本条款 —— 它既是你的严格义务，也是你全部许可的前提条件。
+
+## 著作权许可
+
+许可方授予你一项著作权许可：对于任何【被允许的用途】，你可以对软件做任何本来会侵犯许可方著作权的行为。
+但你只能依照【分发许可】分发软件，只能依照【修改与新作品许可】修改软件或基于软件创作新作品。
+
+## 分发许可
+
+许可方额外授予你一项著作权许可：分发软件的副本。
+你的分发许可涵盖依照【修改与新作品许可】所允许的、包含修改与新作品的分发。
+
+## 声明保留
+
+你必须确保：任何从你处获得软件任何部分副本的人，同时也获得本条款的副本（或上述链接），
+以及许可方随软件提供的、所有以 `Required Notice:` 开头的纯文本行。
+
+## 修改与新作品许可
+
+许可方额外授予你一项著作权许可：对于任何被允许的用途，修改软件并基于软件创作新作品。
+
+## 专利许可
+
+许可方授予你一项专利许可，涵盖许可方能够许可（或将来能够许可）的、你使用软件会侵犯的专利权利要求。
+
+## 非商业用途
+
+任何非商业用途都是被允许的用途。
+
+## 个人用途
+
+出于研究、实验、为公共知识之利益而进行的测试、个人学习、私人娱乐、业余爱好项目、
+业余追求或宗教活动的个人使用，且不预期任何商业应用，属于被允许的用途。
+
+## 非商业组织
+
+任何慈善组织、教育机构、公共研究机构、公共安全或卫生组织、环境保护组织，
+或政府机构的使用，均属于被允许的用途 —— **无论其资金来源如何、以及由此产生的义务如何**。
+
+## 合理使用
+
+依法律你可能对软件享有「合理使用」的权利。本条款不限制这些权利。
+
+## 无其他权利
+
+本条款不允许你再许可或转让你的任何许可给他人，也不阻止许可方向他人授予许可。
+本条款不暗示任何其他许可。
+
+## 专利防御
+
+如果你书面主张软件侵犯或帮助侵犯任何专利，你依本条款获得的软件专利许可立即终止。
+如果你的公司提出此类主张，你为公司所做工作的专利许可立即终止。
+
+## 违约
+
+在你第一次收到书面通知、被告知你违反本条款中的任何内容，
+或对软件做了你的许可未涵盖的事情时，**只要你在收到通知后 32 天内完全遵守本条款、
+并采取实际措施纠正过去的违规行为，你的许可仍可继续有效**。
+否则，你的全部许可立即终止。
+
+## 无责任
+
+***在法律允许的范围内，软件按「现状」提供，不附带任何保证或条件；
+对于因本条款、或软件的使用或性质而产生的任何损害，许可方在任何法律主张下均不向你承担责任。***
+
+## 定义
+
+**许可方**：提出本条款的个人或实体。**软件**：许可方依本条款提供的软件。
+**你**：同意本条款的个人或实体。
+**你的公司**：你为其工作的任何法律实体、独资企业或其他组织，以及控制该组织、
+受该组织控制、或与该组织处于共同控制之下的所有组织。
+**控制**：拥有某实体实质上全部资产的所有权，或通过表决、合同或其他方式指导其管理与政策的能力。控制可以是直接的或间接的。
+**你的许可**：依本条款授予你的全部许可。
+**使用**：你对软件所做的、需要用到你某一项许可的任何事情。
 
 
-六、免责声明
-
-6.1 本作品按「现状」提供，不附带任何形式的明示或默示保证，包括但
-    不限于对适销性、特定用途适用性以及不侵权的保证。
-6.2 在法律允许的最大范围内，许可方不对因使用或无法使用本作品而
-    产生的任何直接、间接、偶然、特殊或后果性损害承担责任，包括
-    但不限于数据丢失、设备损坏或业务中断。
-6.3 本作品为教学演示工具，不得用于医疗、交通、核设施或其他可能
-    危及人身安全的高危场景。
-
-
-七、许可终止
-
-7.1 你违反本协议任何条款时，本许可自动终止，无需另行通知。
-7.2 许可终止后，你应立即停止使用本作品，并删除其全部副本。
-7.3 第 三、五、六、八 条在许可终止后继续有效。
-
-
-八、其他条款
-
-8.1 本协议的订立、效力、解释与争议解决，均适用中华人民共和国法律。
-8.2 若本协议任何条款被有权机关认定为无效或不可执行，该条款应在
-    最小必要范围内被调整，其余条款仍具有完全效力。
-8.3 许可方保留随时修订本协议的权利；修订后的协议适用于之后发布的
-    版本，已按旧版取得的权利不受影响。
-
-
-────────────────────────────────────────────────────────────────────────
-  联系方式：UNSA Studio
-  安装使用本软件，另需接受随安装包提供的《最终用户许可协议》（EULA）。
-  两份文件条款一致，分别面向开发者与最终用户。
-────────────────────────────────────────────────────────────────────────
+════════════════════════════════════════════════════════════════════════════
+  UNSA Studio · 视频展台（VideoPresenter）
+  SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  Required Notice: Copyright (C) 2026 UNSA Studio
+════════════════════════════════════════════════════════════════════════════
