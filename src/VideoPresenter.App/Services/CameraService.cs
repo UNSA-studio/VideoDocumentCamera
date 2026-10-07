@@ -766,7 +766,7 @@ public sealed class MediaFoundationCameraService : ICameraService
     private static extern int MFCreateAttributes(out IntPtr ppMFAttributes, uint cInitialSize);
 
     /// <summary>
-    /// 通过原始 vtable 调用 <c>IMFAttributes::SetGUID</c>。
+    /// 通过原始 vtable 调用 <c>IMFAttributes::SetGUID</c>（vtable 总索引 3+21=24）。
     ///
     /// <para><b>为什么不用 C# 的 COM 接口封送</b></para>
     /// <para>
@@ -776,9 +776,8 @@ public sealed class MediaFoundationCameraService : ICameraService
     /// 而 C# 侧不报任何错（SetGUID 的返回值我们当时也没检查）。
     /// </para>
     /// <para>
-    /// 现在改为：拿 IUnknown 指针 → 读 vtable → 取第 24 个槽位
-    /// （IUnknown 占 0..2，IMFAttributes 内 SetGUID 是第 22 个 → 3+21=24）
-    /// → 转成委托直接调。完全绕开封送，行为与 C++ 调用一致。
+    /// 现在改为：拿 IUnknown 指针 → 读 vtable → 取对应槽位 → 转成委托直接调。
+    /// 完全绕开封送，行为与 C++ 调用一致。
     /// </para>
     /// </summary>
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -810,7 +809,26 @@ public sealed class MediaFoundationCameraService : ICameraService
         return setUInt32(pAttributes, ref k, value);
     }
 
-    /// <summary>IMFAttributes::SetString（接口内第 24 个 → vtable 总索引 3+23=26）。</summary>
+    /// <summary>
+    /// IMFAttributes::SetString。
+    ///
+    /// <para><b>vtable 索引必须逐个数，不能想当然</b></para>
+    /// <para>
+    /// IMFAttributes 接口内的顺序（0 起算）：
+    ///   0 GetItem, 1 GetItemType, 2 CompareItem, 3 Compare,
+    ///   4 GetUINT32, 5 GetUINT64, 6 GetDouble, 7 GetGUID,
+    ///   8 GetStringLength, 9 GetString, 10 GetAllocatedString,
+    ///   11 GetBlobSize, 12 GetBlob, 13 GetAllocatedBlob, 14 GetUnknown,
+    ///   15 SetItem, 16 DeleteItem, 17 DeleteAllItems,
+    ///   18 SetUINT32, 19 SetUINT64, 20 SetDouble, 21 SetGUID, 22 SetString
+    /// 加上 IUnknown 占的 0..2，SetString 的 vtable 总索引 = 3 + 22 = <b>25</b>。
+    /// </para>
+    /// <para>
+    /// ⚠ 这里曾经写成 26：多 1 位就调到 SetBlob 的位置，
+    ///    参数类型完全不匹配 → 访问冲突 → 程序直接崩溃。
+    ///    表现就是"扫到设备后一点就闪退"。
+    /// </para>
+    /// </summary>
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int SetStringVtblFn(IntPtr pThis, ref Guid guidKey, [MarshalAs(UnmanagedType.LPWStr)] string value);
 
@@ -819,7 +837,7 @@ public sealed class MediaFoundationCameraService : ICameraService
         Guid k = key;
 
         IntPtr pVtbl = Marshal.ReadIntPtr(pAttributes);
-        IntPtr fn = Marshal.ReadIntPtr(pVtbl, 26 * IntPtr.Size);
+        IntPtr fn = Marshal.ReadIntPtr(pVtbl, 25 * IntPtr.Size);   // 3 + 22
 
         var setString = Marshal.GetDelegateForFunctionPointer<SetStringVtblFn>(fn);
         return setString(pAttributes, ref k, value);
