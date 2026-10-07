@@ -240,8 +240,9 @@ public sealed partial class MainWindow : Window
             // 是否全屏由设置决定（默认开）
             if (Vm.Settings.StartFullScreen) SetFullScreen(true);
 
-            // 把存放在设置里的开关同步到实际状态（注册表 / 辅助线）
+            // 把存放在设置里的开关同步到实际状态（注册表 / 辅助线 / 状态栏位置）
             ApplyGuides();
+            ApplyStatusBarPosition();
             ApplyAutoStart(Vm.Settings.AutoStartWithWindows);
 
             App.ReportWindowReady(this);
@@ -453,10 +454,20 @@ public sealed partial class MainWindow : Window
     private Color _annotationColor = Colors.Red;
     private double _rotationAngle;
 
-    /// <summary>进入 / 退出批注模式。</summary>
+    /// <summary>
+    /// 进入 / 退出批注模式。
+    /// <para>
+    /// <b>⚠ 画布不能跟着隐藏。</b>
+    /// 批注的语义是「画在画面上并留在画面上」——
+    /// 退出批注模式只是不再接受新的笔迹，已有的笔迹必须继续可见。
+    /// 所以这里只切换 IsHitTestVisible（是否响应指针），Visibility 恒为 Visible。
+    /// 笔迹的清除只有两条途径：用户用橡皮擦擦、或退出软件。
+    /// </para>
+    /// </summary>
     private void SetAnnotationMode(bool on)
     {
-        AnnotationCanvas.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        AnnotationCanvas.Visibility = Visibility.Visible;
+        AnnotationCanvas.IsHitTestVisible = on;
         AnnotationToolbar.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
 
         if (!on) EndStroke(null);
@@ -467,18 +478,14 @@ public sealed partial class MainWindow : Window
         var pt = e.GetCurrentPoint(AnnotationCanvas);
         _activePointerId = pt.PointerId;
 
-        // ── 橡皮擦：点中哪一笔就删哪一笔 ──
+        // ── 橡皮擦：擦掉笔画所经过的那一段（不是整笔）──
         if (_eraserMode)
         {
-            for (int i = _annotations.Count - 1; i >= 0; i--)
-            {
-                if (HitTestStroke(_annotations[i], pt.Position))
-                {
-                    AnnotationCanvas.Children.Remove(_annotations[i]);
-                    _annotations.RemoveAt(i);
-                    break;
-                }
-            }
+            // 捕获指针，这样拖到画布之外也能持续收到 Moved
+            try { AnnotationCanvas.CapturePointer(e.Pointer); }
+            catch { /* 忽略 */ }
+
+            EraseAt(pt.Position);
             return;
         }
 
@@ -509,9 +516,27 @@ public sealed partial class MainWindow : Window
 
     private void AnnotationCanvas_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        var pt = e.GetCurrentPoint(AnnotationCanvas);
+
+        // ── 橡皮擦拖动：连续擦除 ──
+        if (_eraserMode)
+        {
+            if (pt.PointerId != _activePointerId) return;
+
+            // 鼠标可能在按键松开后仍然送来 Moved，需要主动收尾
+            if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse &&
+                !pt.Properties.IsLeftButtonPressed)
+            {
+                EndStroke(e);
+                return;
+            }
+
+            EraseAt(pt.Position);
+            return;
+        }
+
         if (_currentStroke is null) return;
 
-        var pt = e.GetCurrentPoint(AnnotationCanvas);
         if (pt.PointerId != _activePointerId) return;
 
         // 鼠标可能在按键松开后仍然送来 Moved，需要主动收尾
@@ -539,6 +564,88 @@ public sealed partial class MainWindow : Window
         }
 
         _currentStroke = null;
+    }
+
+    /// <summary>橡皮擦半径（画布像素），取自设置。</summary>
+    private double EraserRadius => Vm.Settings.EraserThickness;
+
+    /// <summary>
+    /// 局部擦除：把落在橡皮范围内的顶点从笔画中剔除，剩余部分按连续性拆成若干条新笔画。
+    ///
+    /// <para><b>为什么不能简单地删掉点</b></para>
+    /// <para>
+    /// WinUI 3 没有 InkCanvas（那是 UWP / WPF 的），笔画就是一条 Polyline。
+    /// 若只删掉中间的点，Polyline 会把前后两点直接连起来 ——
+    /// 视觉上就是"擦出一个窟窿但多了一条横线"。所以必须按连续性把剩下的顶点拆成多段。
+    /// </para>
+    /// </summary>
+    private void EraseAt(Point p)
+    {
+        double r2 = EraserRadius * EraserRadius;
+
+        var victims = new List<Microsoft.UI.Xaml.Shapes.Polyline>();
+        var additions = new List<Microsoft.UI.Xaml.Shapes.Polyline>();
+
+        foreach (var stroke in _annotations)
+        {
+            if (stroke.Points.Count == 0) continue;
+
+            var segments = new List<List<Point>>();
+            var current = new List<Point>();
+
+            foreach (var v in stroke.Points)
+            {
+                double dx = v.X - p.X;
+                double dy = v.Y - p.Y;
+
+                if (dx * dx + dy * dy <= r2)
+                {
+                    // 命中：断开当前段
+                    if (current.Count >= 2) segments.Add(current);
+                    current = new List<Point>();
+                }
+                else
+                {
+                    current.Add(v);
+                }
+            }
+
+            if (current.Count >= 2) segments.Add(current);
+
+            // 本笔完全没被擦到 → 保持原样
+            if (segments.Count == 1 && segments[0].Count == stroke.Points.Count) continue;
+
+            victims.Add(stroke);
+
+            foreach (var seg in segments)
+            {
+                var nl = new Microsoft.UI.Xaml.Shapes.Polyline
+                {
+                    Stroke = stroke.Stroke,
+                    StrokeThickness = stroke.StrokeThickness,
+                    StrokeLineJoin = stroke.StrokeLineJoin,
+                    StrokeStartLineCap = stroke.StrokeStartLineCap,
+                    StrokeEndLineCap = stroke.StrokeEndLineCap,
+                };
+
+                foreach (var v in seg) nl.Points.Add(v);
+                additions.Add(nl);
+            }
+        }
+
+        if (victims.Count == 0) return;
+
+        foreach (var v in victims)
+        {
+            AnnotationCanvas.Children.Remove(v);
+            _annotations.Remove(v);
+        }
+
+        foreach (var a in additions)
+        {
+            AnnotationCanvas.Children.Add(a);
+            _annotations.Add(a);
+        }
     }
 
     /// <summary>命中测试：点是否落在某条笔画的顶点附近（顶点足够密集，够用）。</summary>
@@ -1036,7 +1143,33 @@ public sealed partial class MainWindow : Window
         sb.Begin();
     }
 
-    /// <summary>把「可调项」全部恢复默认（不动"上次设备"这类记忆值）。</summary>
+    /// <summary>退出程序（带二次确认，避免误点）。</summary>
+    private async void ExitApp_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dlg = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot,
+                Title = "退出视频展台",
+                Content = "确定要退出吗？",
+                PrimaryButtonText = "退出",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        }
+        catch (Exception ex)
+        {
+            // 确认框本身出错也不能卡住用户，直接退
+            Debug.WriteLine($"[VP] 退出确认框失败：{ex.Message}");
+        }
+
+        Close();
+    }
+
+    /// <summary>恢复默认设置（只重置"可调项"，不动上次设备等记忆值）。</summary>
     private async void ResetAllSettings_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -1138,6 +1271,92 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 按设置把状态栏放到 上 / 下 / 左 / 右。
+    ///
+    /// <para><b>为什么是"改坐标"而不是"搬 XAML"</b></para>
+    /// <para>
+    /// 所有元素都住在同一个 4 行 × 3 列 的网格里，换位置只需改
+    /// Grid.SetRow / SetColumn 与行列尺寸。若真去重构 XAML 树，
+    /// 一旦行列配错整个界面会错位 —— 而这里没有实机可测，风险太高。
+    /// </para>
+    ///
+    /// <para><b>侧边状态栏为什么隐藏详细信息</b></para>
+    /// <para>
+    /// 左右两侧是窄条（限宽 180），设备名 + 分辨率 + 帧率 + 启动耗时
+    /// 挤在一行里没法看。所以侧边时只保留主状态文本，并允许换行。
+    /// </para>
+    /// </summary>
+    private void ApplyStatusBarPosition()
+    {
+        if (RootGrid is null || StatusBar is null || ContentArea is null) return;
+
+        var rows = RootGrid.RowDefinitions;
+
+        // ── ① 先还原成"底部"形态 ──
+        StatusBar.Visibility = Visibility.Visible;
+        StatusBar.Padding = new Thickness(16, 0, 16, 0);
+        StatusBar.MinHeight = 30;
+        StatusBar.MaxWidth = double.PositiveInfinity;
+        StatusBar.VerticalAlignment = VerticalAlignment.Stretch;
+        StatusBar.HorizontalAlignment = HorizontalAlignment.Stretch;
+
+        StatusBarInfo.Visibility = Visibility.Visible;
+        StatusBarText.TextWrapping = TextWrapping.NoWrap;
+
+        rows[2].Height = new GridLength(1, GridUnitType.Star);
+        rows[3].Height = GridLength.Auto;
+
+        Grid.SetRow(StatusBar, 3);
+        Grid.SetColumn(StatusBar, 0);
+        Grid.SetColumnSpan(StatusBar, 3);
+
+        Grid.SetRow(ContentArea, 2);
+        Grid.SetColumn(ContentArea, 0);
+        Grid.SetColumnSpan(ContentArea, 3);
+
+        // ── ② 按设置调整 ──
+        switch (Vm.Settings.StatusBarPosition)
+        {
+            case "Top":
+            {
+                // 状态栏占第 2 行（Auto），内容让到第 3 行
+                rows[2].Height = GridLength.Auto;
+                rows[3].Height = new GridLength(1, GridUnitType.Star);
+
+                Grid.SetRow(StatusBar, 2);
+                Grid.SetRow(ContentArea, 3);
+                break;
+            }
+
+            case "Left":
+            case "Right":
+            {
+                bool left = Vm.Settings.StatusBarPosition == "Left";
+
+                // 窄竖条：只保留主状态文本
+                StatusBarInfo.Visibility = Visibility.Collapsed;
+                StatusBarText.TextWrapping = TextWrapping.Wrap;
+                StatusBar.Padding = new Thickness(10, 12, 10, 12);
+                StatusBar.MaxWidth = 190;
+                StatusBar.MinHeight = 0;
+
+                Grid.SetColumn(StatusBar, left ? 0 : 2);
+                Grid.SetColumnSpan(StatusBar, 1);
+                Grid.SetRow(StatusBar, 2);
+                Grid.SetRowSpan(StatusBar, 1);
+
+                Grid.SetColumn(ContentArea, 1);
+                Grid.SetColumnSpan(ContentArea, 1);
+                Grid.SetRow(ContentArea, 2);
+                break;
+            }
+        }
+
+        // 侧边 / 底部切换时，复原主体区域的行跨度
+        Grid.SetRowSpan(ContentArea, 1);
+    }
+
     /// <summary>显示 / 隐藏三分线辅助格。</summary>
     private void ApplyGuides()
     {
@@ -1145,9 +1364,36 @@ public sealed partial class MainWindow : Window
         GuidesLayer.Visibility = Vm.Settings.ShowGuides ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>状态栏位置下拉：写回设置并立即重排布局。</summary>
+    private void StatusBarPos_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (StatusBarPosBox is null) return;
+
+        string pos = StatusBarPosBox.SelectedIndex switch
+        {
+            1 => "Top",
+            2 => "Left",
+            3 => "Right",
+            _ => "Bottom",
+        };
+
+        Vm.Settings.StatusBarPosition = pos;
+
+        // 立即生效（不等下次启动）
+        ApplyStatusBarPosition();
+    }
+
     /// <summary>把设置面板里的下拉框同步为当前设置值。</summary>
     private void SyncSettingsControls()
     {
+        StatusBarPosBox.SelectedIndex = Vm.Settings.StatusBarPosition switch
+        {
+            "Top" => 1,
+            "Left" => 2,
+            "Right" => 3,
+            _ => 0,
+        };
+
         RecordFpsBox.SelectedIndex = Vm.Settings.RecordFps switch
         {
             15 => 0,

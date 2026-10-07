@@ -52,17 +52,29 @@
         </Grid.KeyboardAccelerators>
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="48"/>    <!-- 标题栏（可拖拽） -->
-            <RowDefinition Height="Auto"/>  <!-- 命令栏 -->
-            <RowDefinition Height="*"/>     <!-- 内容区 -->
-            <RowDefinition Height="Auto"/>  <!-- 状态栏 -->
+            <RowDefinition Height="48"/>    <!-- 0 标题栏（可拖拽） -->
+            <RowDefinition Height="Auto"/>  <!-- 1 命令栏 -->
+            <RowDefinition Height="*"/>     <!-- 2 主体（内容区 / 顶部状态栏） -->
+            <RowDefinition Height="Auto"/>  <!-- 3 状态栏（底部时） -->
         </Grid.RowDefinitions>
+
+        <!--
+            列定义：左右两列默认 Auto（宽 0），只有把状态栏放到左侧 / 右侧时才用得上。
+            这样不必为"状态栏换位置"重构整棵 XAML 树 —— 只需在代码里改
+            Grid.SetRow / SetColumn 与行列高度，见 ApplyStatusBarPosition()。
+        -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>  <!-- 0 左侧状态栏 -->
+            <ColumnDefinition Width="*"/>     <!-- 1 主体 -->
+            <ColumnDefinition Width="Auto"/>  <!-- 2 右侧状态栏 -->
+        </Grid.ColumnDefinitions>
 
         <!-- ═══════════════ ① 标题栏 ═══════════════
              右侧留白 140px 给系统绘制的「最小化 / 最大化 / 关闭」按钮，
              这是 WinUI 3 的标准做法：不重绘系统按钮，保持 100% 原生。 -->
         <Grid x:Name="AppTitleBar"
               Grid.Row="0"
+              Grid.ColumnSpan="3"
               Padding="16,0,140,0"
               VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal"
@@ -70,7 +82,9 @@
                         VerticalAlignment="Center">
                 <Image Source="ms-appx:///Assets/AppIcon.png"
                        Width="20" Height="20"/>
-                <TextBlock Text="视频展台"
+                <TextBlock Text=""
+                           x:Name="AppTitleText"
+                           Visibility="Collapsed"
                            Style="{StaticResource BodyStrongTextBlockStyle}"
                            VerticalAlignment="Center"/>
                 <Border Width="1" Height="14"
@@ -83,7 +97,7 @@
         </Grid>
 
         <!-- ═══════════════ ② 命令栏 ═══════════════ -->
-        <Grid Grid.Row="1" Padding="16,0,16,12">
+        <Grid Grid.Row="1" Grid.ColumnSpan="3" Padding="16,0,16,12">
             <StackPanel Orientation="Horizontal"
                         Spacing="8"
                         VerticalAlignment="Center">
@@ -181,11 +195,24 @@
                         ToolTipService.ToolTip="显示 / 隐藏素材栏">
                     <FontIcon Glyph="&#xE700;" FontSize="14"/>
                 </Button>
+
+                <Border Width="1" Height="20"
+                        Background="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        Margin="4,0"/>
+
+                <!-- 退出程序（带二次确认，避免误点） -->
+                <Button Click="ExitApp_Click"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="8"
+                        ToolTipService.ToolTip="退出视频展台">
+                    <FontIcon Glyph="&#xE7E8;" FontSize="14"/>
+                </Button>
             </StackPanel>
         </Grid>
 
         <!-- ═══════════════ ③ 内容区 ═══════════════ -->
-        <Grid Grid.Row="2">
+        <Grid x:Name="ContentArea" Grid.Row="2" Grid.ColumnSpan="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="76"/>
                 <ColumnDefinition Width="*"/>
@@ -510,6 +537,15 @@
                                    TextWrapping="Wrap"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
 
+                        <!-- 设备枚举诊断：把 MF 的原始结果直接摆出来，省去让用户翻日志 -->
+                        <TextBlock Text="{x:Bind Vm.DeviceDiagnosticsText, Mode=OneWay}"
+                                   FontSize="11"
+                                   Margin="0,4,0,0"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Left"
+                                   TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
                         <!-- 把日志路径显示出来：万一仍然扫不到设备，用户可以直接把日志发回来 -->
                         <TextBlock Text="{x:Bind Vm.LogFilePathText}"
                                    FontSize="10"
@@ -618,7 +654,9 @@
         <!-- ═══════════════ ④ 状态栏 ═══════════════
              背景使用 SolidBackgroundFillColorBaseBrush（系统主题资源），
              深浅色 / 强调色随系统变化。 -->
-        <Grid Grid.Row="3"
+        <Grid x:Name="StatusBar"
+              Grid.Row="3"
+              Grid.ColumnSpan="3"
               Padding="16,0"
               MinHeight="30"
               Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
@@ -627,14 +665,16 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <TextBlock Grid.Column="0"
+            <TextBlock x:Name="StatusBarText"
+                       Grid.Column="0"
                        Text="{x:Bind Vm.StatusText, Mode=OneWay}"
                        Style="{StaticResource CaptionTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
 
-            <StackPanel Grid.Column="1"
+            <StackPanel x:Name="StatusBarInfo"
+                        Grid.Column="1"
                         Orientation="Horizontal"
                         Spacing="10"
                         VerticalAlignment="Center">
@@ -664,9 +704,7 @@
                 <TextBlock Text="{x:Bind Vm.BootInfoText, Mode=OneWay}"
                            Style="{StaticResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                <TextBlock Text="UNSA Studio · v1.0.0"
-                           Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                <!-- 右下角不显示工作室名（用户要求去掉） -->
             </StackPanel>
         </Grid>
 
@@ -683,6 +721,9 @@
             每次打开都播放；宽度与分组布局完全可控。
         -->
         <Grid x:Name="SettingsOverlay"
+              Grid.Row="0"
+              Grid.RowSpan="4"
+              Canvas.ZIndex="100"
               Visibility="Collapsed"
               Opacity="0">
 
@@ -930,16 +971,14 @@
 
                     <!-- ══════════ 批注（进阶）══════════ -->
 
-                    <!--
-                        这里没有"橡皮擦大小"——因为当前的橡皮擦语义是
-                        「点中哪一笔就删掉整笔」（见 MainWindow 的命中测试），
-                        而不是"擦出一块空白"。既然没有大小可言，就不放一个无效的滑杆。
-                    -->
-
                     <StackPanel Spacing="8">
                         <TextBlock Text="批注（进阶）" Style="{StaticResource BodyStrongTextBlockStyle}"/>
 
-                        <TextBlock Text="橡皮擦为「点中即删整笔」模式，无需设置粗细。"
+                        <Slider Header="橡皮擦大小"
+                                Minimum="6" Maximum="60" StepFrequency="1"
+                                Value="{x:Bind Vm.Settings.EraserThickness, Mode=TwoWay}"/>
+
+                        <TextBlock Text="橡皮擦为局部擦除：擦到哪里，哪一段笔迹消失（不是整笔删除）。"
                                    FontSize="11"
                                    TextWrapping="Wrap"
                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
@@ -949,6 +988,16 @@
 
                     <StackPanel Spacing="8">
                         <TextBlock Text="界面" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+
+                        <ComboBox x:Name="StatusBarPosBox"
+                                  Header="状态栏位置"
+                                  MinWidth="200" HorizontalAlignment="Left"
+                                  SelectionChanged="StatusBarPos_SelectionChanged">
+                            <ComboBoxItem Content="底部（默认）"/>
+                            <ComboBoxItem Content="顶部"/>
+                            <ComboBoxItem Content="左侧"/>
+                            <ComboBoxItem Content="右侧"/>
+                        </ComboBox>
 
                         <ToggleSwitch Header="启动时展开素材栏"
                                       OnContent="开" OffContent="关"

@@ -22,6 +22,19 @@ public sealed record CameraDevice(int Index, string Name, string SymbolicLink)
 public interface ICameraService : IDisposable
 {
     IReadOnlyList<CameraDevice> Devices { get; }
+
+    /// <summary>
+    /// 设备枚举的诊断信息（会显示在界面上，便于用户直接反馈问题）。
+    ///
+    /// <para><b>为什么要有它</b></para>
+    /// <para>
+    /// 相机扫不到的原因很多：系统缺 Media Foundation、设备驱动异常、
+    /// 设备被别的程序占用、USB 供电不足……这些从界面上完全看不出来。
+    /// 把原始 HRESULT 与枚举到的数量摆出来，是最有效的排查手段。
+    /// </para>
+    /// </summary>
+    string DiagnosticsText { get; }
+
     bool IsRunning { get; }
     double Fps { get; }
 
@@ -95,6 +108,17 @@ public sealed class MediaFoundationCameraService : ICameraService
 
     /// <summary>Media Foundation 是否可用（供界面提示用）。</summary>
     public bool IsAvailable => _mfAvailable;
+
+    /// <summary>MFStartup 的返回值（诊断用）。</summary>
+    private readonly int _mfStartupHr;
+
+    private string _diagnostics = "尚未扫描设备";
+    /// <summary>设备枚举的诊断文本（显示在界面引导层里）。</summary>
+    public string DiagnosticsText
+    {
+        get => _diagnostics;
+        private set => _diagnostics = value;
+    }
 
     private IMFSourceReader? _reader;
     private Thread? _readThread;
@@ -176,8 +200,8 @@ public sealed class MediaFoundationCameraService : ICameraService
         try
         {
             int hr = MFStartup(MF_VERSION, 0);
+            _mfStartupHr = hr;
             _mfAvailable = hr >= 0;
-
             if (_mfAvailable)
             {
                 Debug.WriteLine("[VP-MF] Media Foundation 已启动");
@@ -191,6 +215,7 @@ public sealed class MediaFoundationCameraService : ICameraService
         {
             // 例如 mfplat.dll 加载失败（Windows N 版根本没这个组件）
             _mfAvailable = false;
+            _mfStartupHr = unchecked((int)0x80004005);   // E_FAIL
             Debug.WriteLine($"[VP-MF] Media Foundation 初始化异常：{ex.Message}（相机功能已禁用）");
         }
     }
@@ -202,6 +227,10 @@ public sealed class MediaFoundationCameraService : ICameraService
         if (!_mfAvailable)
         {
             lock (_gate) { _devices.Clear(); }
+
+            DiagnosticsText = $"✗ Media Foundation 不可用（MFStartup HRESULT=0x{_mfStartupHr:X8}）\n"
+                            + "  系统可能是 Windows N/KN 版或精简版，缺少 Media Foundation 组件。";
+
             StatusChanged?.Invoke(this, "本系统未提供 Media Foundation 组件，无法枚举视频设备");
             return;
         }
@@ -232,6 +261,15 @@ public sealed class MediaFoundationCameraService : ICameraService
                 if (pArray == IntPtr.Zero || count == 0)
                 {
                     Log("[VP-MF] 系统返回 0 个视频设备（机器上可能确实没有摄像头/展台）");
+
+                    DiagnosticsText =
+                        $"✓ Media Foundation 可用（MFStartup HRESULT=0x{_mfStartupHr:X8}）\n" +
+                        "✗ MFEnumDeviceSources 调用成功，但系统返回 0 个视频设备\n" +
+                        "  说明：系统的设备栈里没有「视频捕获」类设备。常见原因：\n" +
+                        "    · USB 没插好 / 供电不足（换口试试，优先主板后置 USB）\n" +
+                        "    · 该展台需要先装厂商驱动才会出现在系统里\n" +
+                        "    · 设备被别的程序占用（希沃白板 / 钉钉 / 腾讯会议 / 相机）\n" +
+                        "    · 可在「设备管理器 → 照相机 / 图像设备」里确认是否存在";
                 }
                 else
                 {
@@ -269,10 +307,15 @@ public sealed class MediaFoundationCameraService : ICameraService
                 }
 
                 Log($"[VP-MF] 枚举完成，共 {_devices.Count} 个视频设备");
+
+                DiagnosticsText = $"✓ Media Foundation 可用；已枚举到 {count} 个视频捕获设备";
             }
             catch (Exception ex)
             {
                 Log($"[VP-MF] 设备枚举失败：{ex}");
+
+                DiagnosticsText = "✓ Media Foundation 可用\n" +
+                                  $"✗ 设备枚举抛出异常：{ex.Message}";
             }
             finally
             {

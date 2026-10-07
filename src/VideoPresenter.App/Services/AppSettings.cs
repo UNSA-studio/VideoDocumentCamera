@@ -302,6 +302,20 @@ public sealed class AppSettings : ObservableObject
         set { if (SetProperty(ref _rightPanelOpenByDefault, value)) ScheduleSave(); }
     }
 
+    private string _statusBarPosition = "Bottom";
+    /// <summary>
+    /// 状态栏位置："Bottom"（默认）/ "Top" / "Left" / "Right"。
+    /// </summary>
+    public string StatusBarPosition
+    {
+        get => _statusBarPosition;
+        set
+        {
+            string v = value is "Top" or "Left" or "Right" ? value : "Bottom";
+            if (SetProperty(ref _statusBarPosition, v)) ScheduleSave();
+        }
+    }
+
     private bool _showGuides;
     /// <summary>画面上显示三分线辅助格。</summary>
     public bool ShowGuides

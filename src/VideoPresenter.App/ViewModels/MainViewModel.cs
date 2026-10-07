@@ -242,6 +242,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     public string SnapshotCountText => Snapshots.Count.ToString();
 
+    /// <summary>设备枚举的诊断信息（显示在"未连接"引导层里，便于用户直接反馈）。</summary>
+    public string DeviceDiagnosticsText => _camera.DiagnosticsText;
+
     /// <summary>设置面板里那行"上次设备"说明文字。</summary>
     public string LastDeviceText
     {
@@ -368,6 +371,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             _isRefreshing = false;
             (RefreshDevicesCommand as RelayCommand)?.RaiseCanExecuteChanged();
+
+            // 诊断文本是在枚举过程中生成的，刷新后要通知界面重新取值
+            OnPropertyChanged(nameof(DeviceDiagnosticsText));
         }
     }
 
