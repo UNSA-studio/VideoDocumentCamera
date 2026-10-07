@@ -77,18 +77,28 @@ public sealed class MediaFoundationCameraService : ICameraService
     private const uint MF_SOURCE_READER_FIRST_VIDEO_STREAM = 0xFFFFFFFC;
     private const uint MF_SOURCE_READERF_ENDOFSTREAM = 0x00000002;
 
-    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE = new("C60AC5FE-252A-478F-A0EF-BC8FA5F7CAD3");
-    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID = new("8AC3587A-4AE7-42D0-99E0-0A6013EEF90B");
-    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME = new("60D0E559-52F8-4FA2-BBCE-ACDB34A8EC01");
-    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK = new("58F0AAD8-22BF-4F8A-BB3D-D2C4978C6E2F");
-    private static readonly Guid MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = new("FB394F3D-CCF1-42EE-BBB3-F9B845D5681D");
+    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE = new("c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3");
 
-    private static readonly Guid MF_MT_MAJOR_TYPE = new("48EBA18E-F8C9-4687-BF11-0A74CD669FA8");
-    private static readonly Guid MF_MT_SUBTYPE = new("F7E34C9A-42E8-4714-B74B-CB29D72C35E5");
-    private static readonly Guid MF_MT_FRAME_SIZE = new("1652C33D-D6B2-4012-B834-72030849A37D");
-    private static readonly Guid MFMediaType_Video = new("73646976-0000-0010-8000-00AA00389B71");
-    private static readonly Guid MFVideoFormat_RGB32 = new("00000016-0000-0010-8000-00AA00389B71");
-    private static readonly Guid IID_IMFMediaSource = new("80B3FFD1-C067-4B48-B4F4-72D3F2B7D3D3");
+    /// <summary>
+    /// ⚠ 这个 GUID 曾经抄错过（写成 42D0-...-F90B），导致 MFEnumDeviceSources
+    /// 一直返回 0x80070057 (E_INVALIDARG) —— 因为它找不到 SOURCE_TYPE 属性。
+    /// 现按微软官方 mfidl.h 的值逐段核对：
+    ///   EXTERN_GUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+    ///               0x8ac3587a, 0x4ae7, 0x42d8, 0x99, 0xe0,
+    ///               0x0a, 0x60, 0x13, 0xee, 0xf9, 0x0f);
+    /// </summary>
+    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID = new("8ac3587a-4ae7-42d8-99e0-0a6013eef90f");
+    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME = new("60d0e559-52f8-4fa2-bbce-acdb34a8ec01");
+    private static readonly Guid MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK = new("58f0aad8-22bf-4f8a-bb3d-d2c4978c6e2f");
+    private static readonly Guid MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = new("fb394f3d-ccf1-42ee-bbb3-f9b845d5681d");
+
+    /// <summary>⚠ 同样核对自 mfapi.h：{48eba18e-f8c9-4687-bf11-0a74c9f96a8f}</summary>
+    private static readonly Guid MF_MT_MAJOR_TYPE = new("48eba18e-f8c9-4687-bf11-0a74c9f96a8f");
+    private static readonly Guid MF_MT_SUBTYPE = new("f7e34c9a-42e8-4714-b74b-cb29d72c35e5");
+    private static readonly Guid MF_MT_FRAME_SIZE = new("1652c33d-d6b2-4012-b834-72030849a37d");
+    private static readonly Guid MFMediaType_Video = new("73646976-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MFVideoFormat_RGB32 = new("00000016-0000-0010-8000-00aa00389b71");
+    private static readonly Guid IID_IMFMediaSource = new("80b3ffd1-c067-4b48-b4f4-72d3f2b7d3d3");
 
     private const int MF_VERSION = 0x0002_0070;
 

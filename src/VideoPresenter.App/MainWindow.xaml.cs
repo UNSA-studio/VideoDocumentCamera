@@ -485,7 +485,8 @@ public sealed partial class MainWindow : Window
             try { AnnotationCanvas.CapturePointer(e.Pointer); }
             catch { /* 忽略 */ }
 
-            EraseAt(pt.Position);
+            ResetEraseThrottle();
+            EraseAtThrottled(pt.Position);
             return;
         }
 
@@ -531,7 +532,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            EraseAt(pt.Position);
+            EraseAtThrottled(pt.Position);
             return;
         }
 
@@ -568,6 +569,40 @@ public sealed partial class MainWindow : Window
 
     /// <summary>橡皮擦半径（画布像素），取自设置。</summary>
     private double EraserRadius => Vm.Settings.EraserThickness;
+
+    /// <summary>上一次执行擦除的位置（用于节流，避免每帧重建笔画导致卡顿）。</summary>
+    private Point _lastErasePoint;
+    private bool _hasErasedOnce;
+
+    /// <summary>
+    /// 橡皮擦入口（带节流）。
+    ///
+    /// <para><b>为什么要节流</b></para>
+    /// <para>
+    /// 局部擦除需要遍历所有笔迹的所有顶点，并重建被擦中的笔画。
+    /// PointerMoved 每秒能来 100+ 次，每次都做全量重建会明显卡顿 ——
+    /// 表现就是"一帧一帧地擦"。这里要求指针至少移动了 1/4 橡皮半径才处理一次。
+    /// </para>
+    /// </summary>
+    private void EraseAtThrottled(Point p)
+    {
+        if (_hasErasedOnce)
+        {
+            double dx = p.X - _lastErasePoint.X;
+            double dy = p.Y - _lastErasePoint.Y;
+            double minStep = Math.Max(2.0, EraserRadius * 0.25);
+
+            if (dx * dx + dy * dy < minStep * minStep) return;
+        }
+
+        _lastErasePoint = p;
+        _hasErasedOnce = true;
+
+        EraseAt(p);
+    }
+
+    /// <summary>一次擦除动作结束时调用（下次按下时重新开始）。</summary>
+    private void ResetEraseThrottle() => _hasErasedOnce = false;
 
     /// <summary>
     /// 局部擦除：把落在橡皮范围内的顶点从笔画中剔除，剩余部分按连续性拆成若干条新笔画。
@@ -1044,27 +1079,22 @@ public sealed partial class MainWindow : Window
         SyncSettingsControls();
 
         // ① 重置到起始状态
+        //
+        // ⚠ 关键：不要在 Overlay 上用 Opacity 做淡入。
+        //   如果 Storyboard 因任何原因没能生效（目标无效 / 动画被系统禁用），
+        //   Opacity 就会【永久停在 0】—— 表现就是"设置打不开"。
+        //   现在遮罩保持完全不透明，动画只作用在卡片的位移与缩放上：
+        //   即使动画失败，浮层也是可见的。
         SettingsCardTransform.TranslateY = 24;
         SettingsCardTransform.ScaleX = 0.98;
         SettingsCardTransform.ScaleY = 0.98;
-        SettingsOverlay.Opacity = 0;
+        SettingsOverlay.Opacity = 1;
         SettingsOverlay.Visibility = Visibility.Visible;
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var sb = new Storyboard();
 
-        // ② 遮罩淡入
-        var fade = new DoubleAnimation
-        {
-            To = 1,
-            Duration = new Duration(TimeSpan.FromMilliseconds(180)),
-            EasingFunction = ease,
-        };
-        Storyboard.SetTarget(fade, SettingsOverlay);
-        Storyboard.SetTargetProperty(fade, "Opacity");
-        sb.Children.Add(fade);
-
-        // ③ 卡片上浮
+        // ② 卡片上浮
         var moveY = new DoubleAnimation
         {
             To = 0,
@@ -1111,36 +1141,8 @@ public sealed partial class MainWindow : Window
         if (!_settingsOpen) return;
         _settingsOpen = false;
 
-        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
-        var sb = new Storyboard();
-
-        var fade = new DoubleAnimation
-        {
-            To = 0,
-            Duration = new Duration(TimeSpan.FromMilliseconds(150)),
-            EasingFunction = ease,
-        };
-        Storyboard.SetTarget(fade, SettingsOverlay);
-        Storyboard.SetTargetProperty(fade, "Opacity");
-        sb.Children.Add(fade);
-
-        var moveY = new DoubleAnimation
-        {
-            To = 16,
-            Duration = new Duration(TimeSpan.FromMilliseconds(150)),
-            EasingFunction = ease,
-        };
-        Storyboard.SetTarget(moveY, SettingsCardTransform);
-        Storyboard.SetTargetProperty(moveY, "(UIElement.RenderTransform).(CompositeTransform.TranslateY)");
-        sb.Children.Add(moveY);
-
-        sb.Completed += (_, _) =>
-        {
-            // 动画播放期间用户可能又点开了，别把新打开的浮层收掉
-            if (!_settingsOpen) SettingsOverlay.Visibility = Visibility.Collapsed;
-        };
-
-        sb.Begin();
+        // 出场同样不用 Opacity（理由见 ShowSettingsAsync）
+        SettingsOverlay.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>退出程序（带二次确认，避免误点）。</summary>
