@@ -464,6 +464,27 @@ if ($doApp) {
         Write-Warning '  发布目录中没有启动器！桌面快捷方式将无法工作。请先执行 -Stage Launcher。'
     }
 
+    # ── 许可文件：随程序目录一起分发 ──────────────────────────────────────
+    #
+    # 为什么必须放进去（这不是可选项）：
+    #   PolyForm Noncommercial 1.0.0 的【声明保留】条款要求 ——
+    #   「你必须确保任何从你处获得软件任何部分副本的人，同样获得本条款的副本
+    #     （或链接），以及所有以 Required Notice: 开头的声明行。」
+    #
+    # 把 LICENSE 放进 dist/app 后：
+    #   · WiX 的 GeneratedFiles.wxs 是扫描 dist/app 生成的 → 自动打进 MSI
+    #   · Inno 的 Source 是 "..\..\dist\app\*"           → 自动打进 EXE
+    # 一处放置，两个安装包同时生效。
+    #
+    $licenseSrc = Join-Path (Split-Path $PSScriptRoot -Parent) 'LICENSE'
+    if (Test-Path $licenseSrc) {
+        Copy-Item $licenseSrc (Join-Path $appOutDir 'LICENSE.txt') -Force
+        Write-Host '  许可协议（LICENSE.txt）已随程序分发。' -ForegroundColor Green
+    }
+    else {
+        Write-Warning '  未找到 LICENSE 文件 —— PolyForm 的声明保留条款要求随软件提供许可条款。'
+    }
+
     # ── 裁剪多语言资源 ──────────────────────────────────────────────────
     #  self-contained 发布会把 Windows App SDK 的全部语言资源（.mui）带进来，
     #  本应用界面只有中文与英文，其余语言目录可直接删除：
