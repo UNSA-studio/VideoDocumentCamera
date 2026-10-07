@@ -80,8 +80,7 @@
             <StackPanel Orientation="Horizontal"
                         Spacing="10"
                         VerticalAlignment="Center">
-                <Image Source="ms-appx:///Assets/AppIcon.png"
-                       Width="20" Height="20"/>
+                <!-- 左上角不显示软件图标（用户要求去掉） -->
                 <TextBlock Text=""
                            x:Name="AppTitleText"
                            Visibility="Collapsed"
@@ -200,13 +199,29 @@
                         Background="{ThemeResource DividerStrokeColorDefaultBrush}"
                         Margin="4,0"/>
 
-                <!-- 退出程序（带二次确认，避免误点） -->
-                <Button Click="ExitApp_Click"
+                <!-- 窗口控制：最小化 / 最大化 / 关闭 -->
+                <Button Click="Minimize_Click"
                         Background="Transparent"
                         BorderThickness="0"
                         Padding="8"
-                        ToolTipService.ToolTip="退出视频展台">
-                    <FontIcon Glyph="&#xE7E8;" FontSize="14"/>
+                        ToolTipService.ToolTip="最小化">
+                    <FontIcon Glyph="&#xE921;" FontSize="12"/>
+                </Button>
+
+                <Button Click="MaximizeRestore_Click"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="8"
+                        ToolTipService.ToolTip="最大化 / 还原">
+                    <FontIcon Glyph="&#xE922;" FontSize="12"/>
+                </Button>
+
+                <Button Click="CloseWindow_Click"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="8"
+                        ToolTipService.ToolTip="关闭">
+                    <FontIcon Glyph="&#xE8BB;" FontSize="12"/>
                 </Button>
             </StackPanel>
         </Grid>
@@ -741,7 +756,7 @@
                     BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                     BorderThickness="1">
                 <Border.RenderTransform>
-                    <CompositeTransform x:Name="SettingsCardTransform"/>
+                    <TranslateTransform x:Name="SettingsCardTransform"/>
                 </Border.RenderTransform>
                 <Border.RenderTransformOrigin>0.5,0.5</Border.RenderTransformOrigin>
                 <Border.Shadow>

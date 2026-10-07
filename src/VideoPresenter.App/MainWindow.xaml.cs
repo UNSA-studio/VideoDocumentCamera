@@ -1085,16 +1085,14 @@ public sealed partial class MainWindow : Window
         //   Opacity 就会【永久停在 0】—— 表现就是"设置打不开"。
         //   现在遮罩保持完全不透明，动画只作用在卡片的位移与缩放上：
         //   即使动画失败，浮层也是可见的。
-        SettingsCardTransform.TranslateY = 24;
-        SettingsCardTransform.ScaleX = 0.98;
-        SettingsCardTransform.ScaleY = 0.98;
+        SettingsCardTransform.Y = 24;
         SettingsOverlay.Opacity = 1;
         SettingsOverlay.Visibility = Visibility.Visible;
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var sb = new Storyboard();
 
-        // ② 卡片上浮
+        // 卡片上浮（用 TranslateTransform，路径更简单、更不容易失效）
         var moveY = new DoubleAnimation
         {
             To = 0,
@@ -1102,29 +1100,8 @@ public sealed partial class MainWindow : Window
             EasingFunction = ease,
         };
         Storyboard.SetTarget(moveY, SettingsCardTransform);
-        Storyboard.SetTargetProperty(moveY, "(UIElement.RenderTransform).(CompositeTransform.TranslateY)");
+        Storyboard.SetTargetProperty(moveY, "(UIElement.RenderTransform).(TranslateTransform.Y)");
         sb.Children.Add(moveY);
-
-        // ④ 卡片轻微放大（0.98 → 1）
-        var scaleX = new DoubleAnimation
-        {
-            To = 1,
-            Duration = new Duration(TimeSpan.FromMilliseconds(280)),
-            EasingFunction = ease,
-        };
-        Storyboard.SetTarget(scaleX, SettingsCardTransform);
-        Storyboard.SetTargetProperty(scaleX, "(UIElement.RenderTransform).(CompositeTransform.ScaleX)");
-        sb.Children.Add(scaleX);
-
-        var scaleY = new DoubleAnimation
-        {
-            To = 1,
-            Duration = new Duration(TimeSpan.FromMilliseconds(280)),
-            EasingFunction = ease,
-        };
-        Storyboard.SetTarget(scaleY, SettingsCardTransform);
-        Storyboard.SetTargetProperty(scaleY, "(UIElement.RenderTransform).(CompositeTransform.ScaleY)");
-        sb.Children.Add(scaleY);
 
         sb.Begin();
 
@@ -1144,6 +1121,24 @@ public sealed partial class MainWindow : Window
         // 出场同样不用 Opacity（理由见 ShowSettingsAsync）
         SettingsOverlay.Visibility = Visibility.Collapsed;
     }
+
+    /// <summary>最小化窗口。</summary>
+    private void Minimize_Click(object sender, RoutedEventArgs e)
+    {
+        if (AppWindow.Presenter is OverlappedPresenter p) p.Minimize();
+    }
+
+    /// <summary>最大化 / 还原。</summary>
+    private void MaximizeRestore_Click(object sender, RoutedEventArgs e)
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter p) return;
+
+        if (p.State == OverlappedPresenterState.Maximized) p.Restore();
+        else p.Maximize();
+    }
+
+    /// <summary>关闭窗口（复用带确认的退出流程）。</summary>
+    private void CloseWindow_Click(object sender, RoutedEventArgs e) => ExitApp_Click(sender, e);
 
     /// <summary>退出程序（带二次确认，避免误点）。</summary>
     private async void ExitApp_Click(object sender, RoutedEventArgs e)

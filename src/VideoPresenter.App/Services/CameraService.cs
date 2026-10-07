@@ -403,24 +403,51 @@ public sealed class MediaFoundationCameraService : ICameraService
                     return Fail($"无法再次枚举到该视频设备（索引 {device.Index}，共 {count} 个）");
                 }
 
-                Guid iidSource = IID_IMFMediaSource;
+                // 这里只需要确认设备还在，指针数组用完即释放
+                // （真正打开设备走 MFCreateDeviceSource + 符号链接，不用这份数组）
+                Marshal.FreeCoTaskMem(pArray);
+                pArray = IntPtr.Zero;
+
+                // ── 用 SYMBOLIC_LINK 直接创建媒体源 ──
+                //
+                // 为什么不走 IMFActivate.ActivateObject：
+                //   ActivateObject 需要 IID_IMFMediaSource，而这个 IID 在头文件里是
+                //   EXTERN_C const IID（值在 .c 文件），只能凭记忆写 ——
+                //   这一轮已经因"凭记忆写 GUID"栽过两次了。
+                //   MFCreateDeviceSource 走属性（SOURCE_TYPE + SYMBOLIC_LINK），
+                //   返回 IMFMediaSource**，不涉及任何 IID。
+                if (string.IsNullOrWhiteSpace(device.SymbolicLink))
+                    return Fail("该设备没有可用的符号链接（请点「刷新」重新扫描）");
+
+                IntPtr openAttrs = IntPtr.Zero;
+                int hrCreateOpen = MFCreateAttributes(out openAttrs, 2);
+                if (hrCreateOpen < 0 || openAttrs == IntPtr.Zero)
+                    return Fail($"MFCreateAttributes 失败 0x{hrCreateOpen:X8}");
+
+                int hrOpen;
                 try
                 {
-                    IntPtr pActivate = Marshal.ReadIntPtr(pArray, device.Index * IntPtr.Size);
-                    var activate = (IMFActivate)Marshal.GetObjectForIUnknown(pActivate);
-                    try
-                    {
-                        hr = activate.ActivateObject(ref iidSource, out source);
-                    }
-                    finally
-                    {
-                        Marshal.ReleaseComObject(activate);
-                        Marshal.Release(pActivate);
-                    }
+                    Guid kType = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE;
+                    Guid vType = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID;
+                    int r1 = SetAttributeGuid(openAttrs, ref kType, ref vType);
+
+                    Guid kLink = MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK;
+                    int r2 = SetAttributeString(openAttrs, ref kLink, device.SymbolicLink);
+
+                    if (r1 < 0 || r2 < 0)
+                        return Fail($"设置设备属性失败（SetGUID=0x{r1:X8}, SetString=0x{r2:X8}）");
+
+                    hrOpen = MFCreateDeviceSource(openAttrs, out source);
                 }
                 finally
                 {
-                    Marshal.FreeCoTaskMem(pArray);
+                    if (openAttrs != IntPtr.Zero) Marshal.Release(openAttrs);
+                }
+
+                if (hrOpen < 0 || source == IntPtr.Zero)
+                {
+                    if (pAttributes != IntPtr.Zero) { Marshal.Release(pAttributes); pAttributes = IntPtr.Zero; }
+                    return Fail($"创建设备媒体源失败 HRESULT=0x{hrOpen:X8}（设备可能已被其它程序占用）");
                 }
 
                 if (pAttributes != IntPtr.Zero)
@@ -428,9 +455,6 @@ public sealed class MediaFoundationCameraService : ICameraService
                     Marshal.Release(pAttributes);
                     pAttributes = IntPtr.Zero;
                 }
-
-                if (hr < 0 || source == IntPtr.Zero)
-                    return Fail("设备可能已被其它程序占用（如相机应用 / 其它展台软件）");
 
                 // SourceReader + MF 内建视频处理（色彩转换 / 缩放）
                 var readerAttrs = CreateAttributesWith(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1);
@@ -786,6 +810,21 @@ public sealed class MediaFoundationCameraService : ICameraService
         return setUInt32(pAttributes, ref k, value);
     }
 
+    /// <summary>IMFAttributes::SetString（接口内第 24 个 → vtable 总索引 3+23=26）。</summary>
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int SetStringVtblFn(IntPtr pThis, ref Guid guidKey, [MarshalAs(UnmanagedType.LPWStr)] string value);
+
+    private static int SetAttributeString(IntPtr pAttributes, ref Guid key, string value)
+    {
+        Guid k = key;
+
+        IntPtr pVtbl = Marshal.ReadIntPtr(pAttributes);
+        IntPtr fn = Marshal.ReadIntPtr(pVtbl, 26 * IntPtr.Size);
+
+        var setString = Marshal.GetDelegateForFunctionPointer<SetStringVtblFn>(fn);
+        return setString(pAttributes, ref k, value);
+    }
+
     [DllImport("mfplat.dll", ExactSpelling = true)]
     private static extern int MFCreateMediaType(out IMFMediaType ppMFType);
 
@@ -809,6 +848,21 @@ public sealed class MediaFoundationCameraService : ICameraService
         IntPtr pAttributes,
         out IntPtr pppSourceActivate,
         out uint pcSourceActivate);
+
+    /// <summary>
+    /// 直接从属性创建媒体源 —— 替代 IMFActivate.ActivateObject + IID_IMFMediaSource。
+    ///
+    /// <para><b>为什么换掉 ActivateObject</b></para>
+    /// <para>
+    /// ActivateObject 需要传入 IID_IMFMediaSource，而这个 IID 在头文件里只是
+    /// <c>EXTERN_C const IID</c>（值在 .c 文件），我只能凭记忆写 ——
+    /// 而这一轮已经因为"凭记忆写 GUID"栽过两次了。
+    /// MFCreateDeviceSource 走属性（SOURCE_TYPE + SYMBOLIC_LINK），
+    /// 返回 <c>IMFMediaSource**</c>，这里用 out IntPtr 接收，完全不涉及 IID。
+    /// </para>
+    /// </summary>
+    [DllImport("mf.dll", ExactSpelling = true)]
+    private static extern int MFCreateDeviceSource(IntPtr pAttributes, out IntPtr ppSource);
 
     /// <summary>WinRT 缓冲的原始指针访问接口（写 SoftwareBitmap 用）。</summary>
     [ComImport]
