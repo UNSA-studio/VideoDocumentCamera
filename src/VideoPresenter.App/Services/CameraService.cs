@@ -507,47 +507,118 @@ public sealed class MediaFoundationCameraService : ICameraService
         return false;
     }
 
+    /// <summary>
+    /// 协商输出格式：BGRA32 + 指定分辨率。
+    ///
+    /// <para><b>⚠ 为什么不能直接用 type.SetGUID / SetUINT64</b></para>
+    /// <para>
+    /// 这是本项目的头号坑：通过 <c>[ComImport]</c> 接口调 IMFAttributes 的方法
+    /// 【不会真正写入属性】（而且不报错）。当初设备扫不到（E_INVALIDARG）
+    /// 就是它造成的；这里如果不改，格式协商会静默失败。
+    /// </para>
+    /// <para>
+    /// 所以统一改成走 vtable 直调（SetAttributeGuid / SetAttributeUInt64），
+    /// 并且【检查每一步的 HRESULT】。任何一步失败就返回 false，
+    /// 由调用方回退 —— 而不是带着一个半成品 MediaType 去协商。
+    /// </para>
+    /// </summary>
     private bool TrySetOutputFormat(int width, int height)
     {
         if (_reader is null) return false;
 
-        IMFMediaType? type = null;
+        IntPtr type = IntPtr.Zero;
         try
         {
-            if (MFCreateMediaType(out type) < 0 || type is null) return false;
+            if (MFCreateMediaType(out IntPtr pType) < 0 || pType == IntPtr.Zero) return false;
+            type = pType;
 
             Guid major = MF_MT_MAJOR_TYPE, video = MFMediaType_Video;
             Guid sub = MF_MT_SUBTYPE, rgb32 = MFVideoFormat_RGB32;
             Guid frameSizeKey = MF_MT_FRAME_SIZE;
             ulong frameSize = ((ulong)(uint)width << 32) | (uint)height;
 
-            type.SetGUID(ref major, ref video);
-            type.SetGUID(ref sub, ref rgb32);
-            type.SetUINT64(ref frameSizeKey, frameSize);
+            int r1 = SetAttributeGuid(type, ref major, ref video);
+            int r2 = SetAttributeGuid(type, ref sub, ref rgb32);
+            int r3 = SetAttributeUInt64(type, ref frameSizeKey, frameSize);
 
-            if (_reader.SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, IntPtr.Zero, type) < 0)
-                return false;
+            Log($"[VP-MF] 生成目标格式 BGRA32 {width}×{height} → SetGUID(Major)=0x{r1:X8}, "
+              + $"SetGUID(Subtype)=0x{r2:X8}, SetUINT64(FrameSize)=0x{r3:X8}");
+
+            if (r1 < 0 || r2 < 0 || r3 < 0) return false;
+
+            int hr = _reader.SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, IntPtr.Zero, type);
+            Log($"[VP-MF] SetCurrentMediaType({width}×{height}) → hr=0x{hr:X8}");
+
+            if (hr < 0) return false;
 
             _width = width;
             _height = height;
-            Debug.WriteLine($"[VP-MF] 输出格式已协商为 BGRA32 {width}×{height}");
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            Log($"[VP-MF] 设置输出格式异常：{ex.Message}");
             return false;
         }
         finally
         {
-            if (type is not null) Marshal.ReleaseComObject(type);
+            if (type != IntPtr.Zero) Marshal.Release(type);
         }
     }
 
+    /// <summary>
+    /// 回退方案：不主动协商格式，读取 SourceReader 当前实际采用的格式。
+    ///
+    /// <para><b>⚠ 之前的写法是错的</b></para>
+    /// <para>
+    /// 以前这里直接假设 1920×1080。但协商失败时设备往往用的是原生格式
+    /// （常见 1280×720 或 640×480），尺寸猜错 → stride 算错 →
+    /// 像素按错误的行宽解析 → <b>画面全黑或错乱</b>。
+    /// 现在改为真的去读 <c>MF_MT_FRAME_SIZE</c>。
+    /// </para>
+    /// </summary>
     private void UseNativeFormat()
     {
-        _width = 1920;
-        _height = 1080;
-        Debug.WriteLine("[VP-MF] 使用设备原生输出格式（按 1080p 处理）");
+        _width = 0;
+        _height = 0;
+
+        try
+        {
+            if (_reader is not null &&
+                _reader.GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, out IMFMediaType mt) >= 0 &&
+                mt is not null)
+            {
+                try
+                {
+                    Guid key = MF_MT_FRAME_SIZE;
+                    if (mt.GetUINT64(ref key, out ulong packed) >= 0)
+                    {
+                        _width = (int)(packed >> 32);
+                        _height = (int)(packed & 0xFFFFFFFF);
+                    }
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(mt);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"[VP-MF] 读取原生格式失败：{ex.Message}");
+        }
+
+        // 实在读不到才用兜底值（1080p 是绝大多数展台的上限，宁可大不可小）
+        if (_width <= 0 || _height <= 0)
+        {
+            _width = 1920;
+            _height = 1080;
+            Log("[VP-MF] 无法读取原生格式，按 1920×1080 兜底处理");
+        }
+        else
+        {
+            Log($"[VP-MF] 使用设备原生输出格式 {_width}×{_height}");
+        }
     }
 
     private static IntPtr CreateAttributesWith(Guid key, uint value)
@@ -809,6 +880,21 @@ public sealed class MediaFoundationCameraService : ICameraService
         return setUInt32(pAttributes, ref k, value);
     }
 
+    /// <summary>IMFAttributes::SetUINT64（接口内第 20 个 → vtable 总索引 3+19=22）。</summary>
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int SetUInt64VtblFn(IntPtr pThis, ref Guid guidKey, ulong unValue);
+
+    private static int SetAttributeUInt64(IntPtr pAttributes, ref Guid key, ulong value)
+    {
+        Guid k = key;
+
+        IntPtr pVtbl = Marshal.ReadIntPtr(pAttributes);
+        IntPtr fn = Marshal.ReadIntPtr(pVtbl, 22 * IntPtr.Size);   // 3 + 19
+
+        var setUInt64 = Marshal.GetDelegateForFunctionPointer<SetUInt64VtblFn>(fn);
+        return setUInt64(pAttributes, ref k, value);
+    }
+
     /// <summary>
     /// IMFAttributes::SetString。
     ///
@@ -844,7 +930,7 @@ public sealed class MediaFoundationCameraService : ICameraService
     }
 
     [DllImport("mfplat.dll", ExactSpelling = true)]
-    private static extern int MFCreateMediaType(out IMFMediaType ppMFType);
+    private static extern int MFCreateMediaType(out IntPtr ppMFType);
 
     [DllImport("mfreadwrite.dll", ExactSpelling = true)]
     private static extern int MFCreateSourceReaderFromMediaSource(
