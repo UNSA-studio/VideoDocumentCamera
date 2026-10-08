@@ -1204,7 +1204,78 @@ public sealed partial class MainWindow : Window
                 ToolBarStack.Orientation = Orientation.Horizontal;
                 ToolBarStack.Padding = new Thickness(12, 6, 12, 6);
                 ToolBarStack.HorizontalAlignment = HorizontalAlignment.Center;
+                ToolBarStack.VerticalAlignment = VerticalAlignment.Center;
+
+                // 竖排时的按钮是 64×58 的大方块（竖条里正合适），
+                // 横过来后必须瘦身，否则一排方块会非常突兀。
+                SetToolButtonLayout(compact: true);
                 break;
+            }
+        }
+
+        // 竖排恢复原尺寸
+        if (Vm.Settings.ToolbarPosition is "Left" or "Right")
+            SetToolButtonLayout(compact: false);
+    }
+
+    /// <summary>
+    /// 切换工具按钮的紧凑布局。
+    /// <para>
+    /// compact=false：竖排用 64×58 方块，图标在上、文字在下；
+    /// compact=true ：横排用自适应宽度 + 图标在左、文字在右，一眼就是一条工具栏。
+    /// </para>
+    /// </summary>
+    private void SetToolButtonLayout(bool compact)
+    {
+        foreach (var child in ToolBarStack.Children)
+        {
+            switch (child)
+            {
+                case Button btn:
+                {
+                    if (compact)
+                    {
+                        btn.Width = double.NaN;      // 自适应
+                        btn.Height = 40;
+                        btn.MinWidth = 0;
+                        btn.Padding = new Thickness(10, 0, 10, 0);
+                    }
+                    else
+                    {
+                        btn.Width = 64;
+                        btn.Height = 58;
+                        btn.Padding = new Thickness(0);
+                    }
+
+                    // 按钮内容是个 StackPanel（图标 + 文字）：横排时改成水平
+                    if (btn.Content is StackPanel sp)
+                    {
+                        sp.Orientation = compact ? Orientation.Horizontal : Orientation.Vertical;
+                        sp.Spacing = compact ? 6 : 4;
+                        sp.HorizontalAlignment = HorizontalAlignment.Center;
+                    }
+
+                    break;
+                }
+
+                case Border sep:
+                {
+                    // 分隔条：竖排是横线（Width=40/Height=1），横排要转成竖线
+                    if (compact)
+                    {
+                        sep.Width = 1;
+                        sep.Height = 22;
+                        sep.Margin = new Thickness(6, 0, 6, 0);
+                    }
+                    else
+                    {
+                        sep.Width = 40;
+                        sep.Height = 1;
+                        sep.Margin = new Thickness(0, 6, 0, 6);
+                    }
+
+                    break;
+                }
             }
         }
     }

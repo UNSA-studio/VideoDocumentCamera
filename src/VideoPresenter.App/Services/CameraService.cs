@@ -487,6 +487,7 @@ public sealed class MediaFoundationCameraService : ICameraService
                     Priority = ThreadPriority.AboveNormal,
                 };
                 _readThread.Start();
+                Log($"[VP-MF] 取帧线程已启动（目标 {_width}×{_height}，bitmap={( _bitmap is null ? "null" : "ok")}）");
 
                 StatusChanged?.Invoke(this, $"已连接：{device.Name}");
                 return true;
@@ -502,7 +503,9 @@ public sealed class MediaFoundationCameraService : ICameraService
 
     private bool Fail(string message)
     {
-        Debug.WriteLine($"[VP-MF] 启动失败：{message}");
+        // ⚠ 必须用 Log 写进 vdc.log —— Debug.WriteLine 只在调试器里可见，
+        //   用户反馈问题时完全看不到，之前正是因此无法定位"已连接之后没画面"。
+        Log($"[VP-MF] 启动失败：{message}");
         StatusChanged?.Invoke(this, $"连接失败：{message}");
         return false;
     }
@@ -636,33 +639,59 @@ public sealed class MediaFoundationCameraService : ICameraService
 
     // ══════════════════════════ 取帧循环 ══════════════════════════
 
-    private void ReadLoop()
+private void ReadLoop()
     {
-        Debug.WriteLine("[VP-MF] 取帧线程已启动");
+        Log("[VP-MF] 取帧循环开始");
+        if (_bitmap is null) Log("[VP-MF] ⚠ _bitmap 为 null，无法拷贝帧");
+
+        int frames = 0;
+        int nullSamples = 0;
+        long lastReport = Environment.TickCount64;
 
         while (_running)
         {
             IMFSample? sample = null;
             IMFMediaBuffer? buffer = null;
-
             try
             {
                 var reader = _reader;
-                if (reader is null) break;
+                if (reader is null) { Log("[VP-MF] _reader 变为 null，退出取帧循环"); break; }
 
                 int hr = reader.ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0,
                                            out _, out uint flags, out _, out sample);
+
                 if (hr < 0)
                 {
-                    Debug.WriteLine($"[VP-MF] ReadSample 失败 0x{hr:X8}");
+                    Log($"[VP-MF] ReadSample 失败 0x{hr:X8}（已取 {frames} 帧）");
                     break;
                 }
 
-                if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0) break;
-                if (sample is null) continue;
+                if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
+                {
+                    Log("[VP-MF] ReadSample 返回流结束标志");
+                    break;
+                }
 
-                if (sample.ConvertToContiguousBuffer(out buffer) < 0 || buffer is null) continue;
-                if (buffer.Lock(out IntPtr ptr, out _, out uint curLen) < 0) continue;
+                if (sample is null)
+                {
+                    // 设备尚未出帧时属正常，但【一直为 null】就是问题所在
+                    nullSamples++;
+                    if (nullSamples <= 5)
+                        Log($"[VP-MF] ReadSample 返回 null sample（flags=0x{flags:X8}）");
+                    continue;
+                }
+
+                if (sample.ConvertToContiguousBuffer(out buffer) < 0 || buffer is null)
+                {
+                    if (frames < 5) Log("[VP-MF] ConvertToContiguousBuffer 失败");
+                    continue;
+                }
+
+                if (buffer.Lock(out IntPtr ptr, out _, out uint curLen) < 0)
+                {
+                    if (frames < 5) Log("[VP-MF] buffer.Lock 失败");
+                    continue;
+                }
 
                 try
                 {
@@ -677,10 +706,18 @@ public sealed class MediaFoundationCameraService : ICameraService
                     int len = (int)Math.Min(curLen, (uint)(stride * height));
                     var bitmap = _bitmap;
                     if (bitmap is null) continue;
-
                     CopyIntoSoftwareBitmap(bitmap, ptr, len);
-
                     UpdateFps();
+                    frames++;
+
+                    // 每秒写一行，用来判断"到底有没有收到帧"
+                    if (Environment.TickCount64 - lastReport >= 1000)
+                    {
+                        lastReport = Environment.TickCount64;
+                        Log($"[VP-MF] 已渲染 {frames} 帧（null sample 累计 {nullSamples}），"
+                          + $"{_fps:F1} fps，缓冲区 {len} 字节，尺寸 {_width}×{_height}");
+                    }
+
                     FrameArrived?.Invoke(this, bitmap);
                 }
                 finally
@@ -690,7 +727,7 @@ public sealed class MediaFoundationCameraService : ICameraService
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[VP-MF] 取帧异常：{ex.Message}");
+                Log($"[VP-MF] 取帧异常：{ex}");
                 break;
             }
             finally
@@ -700,7 +737,7 @@ public sealed class MediaFoundationCameraService : ICameraService
             }
         }
 
-        Debug.WriteLine("[VP-MF] 取帧线程已退出");
+        Log($"[VP-MF] 取帧循环结束，共 {frames} 帧（null sample 累计 {nullSamples}）");
     }
 
     /// <summary>
