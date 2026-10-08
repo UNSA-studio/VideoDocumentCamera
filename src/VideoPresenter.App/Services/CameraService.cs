@@ -1036,7 +1036,7 @@ public sealed class MediaFoundationCameraService : ICameraService
         [PreserveSig] int SetStreamSelection(uint dwStreamIndex, [MarshalAs(UnmanagedType.Bool)] bool fSelected);
         [PreserveSig] int GetNativeMediaType(uint dwStreamIndex, uint dwMediaTypeIndex, out IMFMediaType ppMediaType);
         [PreserveSig] int GetCurrentMediaType(uint dwStreamIndex, out IMFMediaType ppMediaType);
-        [PreserveSig] int SetCurrentMediaType(uint dwStreamIndex, IntPtr pdwReserved, IMFMediaType pMediaType);
+        [PreserveSig] int SetCurrentMediaType(uint dwStreamIndex, IntPtr pdwReserved, IntPtr pMediaType);
         [PreserveSig] int SetCurrentPosition(ref Guid guidTimeFormat, IntPtr varPosition);
         [PreserveSig] int ReadSample(uint dwStreamIndex, uint dwControlFlags,
                                      out uint pdwActualStreamIndex, out uint pdwStreamFlags,
