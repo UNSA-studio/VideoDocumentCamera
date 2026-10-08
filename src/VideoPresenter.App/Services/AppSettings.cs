@@ -324,6 +324,20 @@ public sealed class AppSettings : ObservableObject
         set { if (SetProperty(ref _showGuides, value)) ScheduleSave(); }
     }
 
+    private string _toolbarPosition = "Left";
+    /// <summary>
+    /// 工具栏停靠位置："Left"（默认）/ "Right" / "Top" / "Bottom"。
+    /// </summary>
+    public string ToolbarPosition
+    {
+        get => _toolbarPosition;
+        set
+        {
+            string v = value is "Right" or "Top" or "Bottom" ? value : "Left";
+            if (SetProperty(ref _toolbarPosition, v)) ScheduleSave();
+        }
+    }
+
     // ───────────────────── 设备 ─────────────────────
 
     private bool _rememberLastDevice = true;

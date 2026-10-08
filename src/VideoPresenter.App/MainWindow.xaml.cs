@@ -6,6 +6,7 @@
 //
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Input;
@@ -240,9 +241,10 @@ public sealed partial class MainWindow : Window
             // 是否全屏由设置决定（默认开）
             if (Vm.Settings.StartFullScreen) SetFullScreen(true);
 
-            // 把存放在设置里的开关同步到实际状态（注册表 / 辅助线 / 状态栏位置）
+            // 把存放在设置里的开关同步到实际状态（注册表 / 辅助线 / 状态栏与工具栏位置）
             ApplyGuides();
             ApplyStatusBarPosition();
+            ApplyToolbarPosition();
             ApplyAutoStart(Vm.Settings.AutoStartWithWindows);
 
             App.ReportWindowReady(this);
@@ -1092,14 +1094,19 @@ public sealed partial class MainWindow : Window
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var sb = new Storyboard();
 
-        // 卡片上浮（用 TranslateTransform，路径更简单、更不容易失效）
+        // 卡片上浮。
+        //
+        // ⚠ Storyboard.SetTarget 必须传【元素本体】（SettingsCard），
+        //   不能传 RenderTransform 对象（SettingsCardTransform）——
+        //   传后者时属性路径 "(UIElement.RenderTransform).(...)" 无法解析，
+        //   动画会静默失败，表现就是"设置弹出来没有动画"。
         var moveY = new DoubleAnimation
         {
             To = 0,
             Duration = new Duration(TimeSpan.FromMilliseconds(280)),
             EasingFunction = ease,
         };
-        Storyboard.SetTarget(moveY, SettingsCardTransform);
+        Storyboard.SetTarget(moveY, SettingsCard);
         Storyboard.SetTargetProperty(moveY, "(UIElement.RenderTransform).(TranslateTransform.Y)");
         sb.Children.Add(moveY);
 
@@ -1120,6 +1127,111 @@ public sealed partial class MainWindow : Window
 
         // 出场同样不用 Opacity（理由见 ShowSettingsAsync）
         SettingsOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 按设置把工具栏停靠到 上 / 下 / 左 / 右。
+    ///
+    /// <para><b>实现思路</b></para>
+    /// <para>
+    /// 工具栏、预览区、素材栏都住在同一个网格里（4 列 × 3 行），
+    /// 换位置只需改 Grid.SetRow / SetColumn 与行列尺寸 ——
+    /// 未使用的行列宽/高置 0，所以工具栏只会出现在一个位置。
+    /// 这样不必为"工具栏换边"去搬动整棵 XAML 树。
+    /// </para>
+    /// <para>
+    /// 停靠到上/下时，工具栏内部改为横向排列（竖条横过来就是横条）。
+    /// 素材栏始终固定在右侧，不受影响。
+    /// </para>
+    /// </summary>
+    private void ApplyToolbarPosition()
+    {
+        if (ToolBar is null || PreviewContainer is null || RightPanel is null) return;
+
+        var cols = ContentArea.ColumnDefinitions;
+        var rows = ContentArea.RowDefinitions;
+
+        // ── ① 先复位成"左侧竖排"形态 ──
+        cols[0].Width = new GridLength(76);
+        cols[2].Width = new GridLength(0);
+        rows[0].Height = new GridLength(0);
+        rows[2].Height = new GridLength(0);
+
+        ToolBarStack.Orientation = Orientation.Vertical;
+        ToolBarStack.Padding = new Thickness(6, 12, 6, 12);
+        ToolBarStack.HorizontalAlignment = HorizontalAlignment.Stretch;
+
+        Grid.SetRow(ToolBar, 1);
+        Grid.SetColumn(ToolBar, 0);
+        Grid.SetRowSpan(ToolBar, 1);
+        Grid.SetColumnSpan(ToolBar, 1);
+
+        Grid.SetRow(PreviewContainer, 1);
+        Grid.SetColumn(PreviewContainer, 1);
+
+        Grid.SetRow(RightPanel, 1);
+        Grid.SetColumn(RightPanel, 3);
+
+        // ── ② 按设置调整 ──
+        switch (Vm.Settings.ToolbarPosition)
+        {
+            case "Right":
+            {
+                cols[0].Width = new GridLength(0);
+                cols[2].Width = new GridLength(76);
+                Grid.SetColumn(ToolBar, 2);
+                break;
+            }
+
+            case "Top":
+            case "Bottom":
+            {
+                bool top = Vm.Settings.ToolbarPosition == "Top";
+
+                // 横条：竖列让位，改由行来承载
+                cols[0].Width = new GridLength(0);
+                cols[2].Width = new GridLength(0);
+
+                if (top) rows[0].Height = GridLength.Auto;
+                else rows[2].Height = GridLength.Auto;
+
+                Grid.SetRow(ToolBar, top ? 0 : 2);
+                Grid.SetColumn(ToolBar, 0);
+                // 横条跨"预览区 + 工具列"，但不侵入素材栏
+                Grid.SetColumnSpan(ToolBar, 2);
+
+                // 横过来：内部改横向排列并居中
+                ToolBarStack.Orientation = Orientation.Horizontal;
+                ToolBarStack.Padding = new Thickness(12, 6, 12, 6);
+                ToolBarStack.HorizontalAlignment = HorizontalAlignment.Center;
+                break;
+            }
+        }
+    }
+
+    /// <summary>工具栏位置下拉。</summary>
+    private void ToolbarPos_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ToolbarPosBox is null) return;
+
+        Vm.Settings.ToolbarPosition = ToolbarPosBox.SelectedIndex switch
+        {
+            1 => "Right",
+            2 => "Top",
+            3 => "Bottom",
+            _ => "Left",
+        };
+
+        ApplyToolbarPosition();
+    }
+
+    /// <summary>默认设备下拉：记住用户指定的设备。</summary>
+    private void DefaultDevice_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DefaultDeviceBox?.SelectedItem is CameraDevice dev)
+        {
+            Vm.Settings.LastDeviceName = dev.Name;
+        }
     }
 
     /// <summary>最小化窗口。</summary>
@@ -1390,6 +1502,18 @@ public sealed partial class MainWindow : Window
             "Right" => 3,
             _ => 0,
         };
+
+        ToolbarPosBox.SelectedIndex = Vm.Settings.ToolbarPosition switch
+        {
+            "Right" => 1,
+            "Top" => 2,
+            "Bottom" => 3,
+            _ => 0,
+        };
+
+        // 默认设备下拉：把当前记住的设备选中
+        var match = Vm.Devices.FirstOrDefault(d => d.Name == Vm.Settings.LastDeviceName);
+        if (match is not null) DefaultDeviceBox.SelectedItem = match;
 
         RecordFpsBox.SelectedIndex = Vm.Settings.RecordFps switch
         {

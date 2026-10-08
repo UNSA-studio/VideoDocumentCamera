@@ -80,18 +80,7 @@
             <StackPanel Orientation="Horizontal"
                         Spacing="10"
                         VerticalAlignment="Center">
-                <!-- 左上角不显示软件图标（用户要求去掉） -->
-                <TextBlock Text=""
-                           x:Name="AppTitleText"
-                           Visibility="Collapsed"
-                           Style="{StaticResource BodyStrongTextBlockStyle}"
-                           VerticalAlignment="Center"/>
-                <Border Width="1" Height="14"
-                        Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
-                <TextBlock Text="UNSA Studio"
-                           Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           VerticalAlignment="Center"/>
+                <!-- 左上角不显示任何品牌文字 / 图标（用户要求） -->
             </StackPanel>
         </Grid>
 
@@ -228,18 +217,33 @@
 
         <!-- ═══════════════ ③ 内容区 ═══════════════ -->
         <Grid x:Name="ContentArea" Grid.Row="2" Grid.ColumnSpan="3">
+            <!--
+                工具栏可以停靠在上 / 下 / 左 / 右：
+                  列：0 = 工具栏（左）  1 = 预览区  2 = 工具栏（右）  3 = 素材栏
+                  行：0 = 工具栏（上）  1 = 预览区  2 = 工具栏（下）
+                未使用的行列尺寸为 0，所以工具栏只会出现在一个位置。
+            -->
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="76"/>
+                <ColumnDefinition x:Name="ToolColLeft" Width="76"/>
                 <ColumnDefinition Width="*"/>
+
+                <ColumnDefinition x:Name="ToolColRight" Width="0"/>
                 <!-- 素材栏宽度改由 Border.Width 驱动（Width 是可动画的 double，
                      GridLength 不能直接做动画），并在 code-behind 里做 220ms 缓动 -->
                 <ColumnDefinition x:Name="RightPanelColumn" Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- ③-A 左侧竖排工具条（参考希沃布局） -->
-            <Border Grid.Column="0"
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="ToolRowTop" Height="0"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition x:Name="ToolRowBottom" Height="0"/>
+            </Grid.RowDefinitions>
+
+            <!-- ③-A 竖排 / 横排工具条（停靠位置由设置决定） -->
+            <Border x:Name="ToolBar"
+                    Grid.Column="0"
                     Background="{ThemeResource LayerFillColorDefaultBrush}">
-                <StackPanel Padding="6,12" Spacing="2">
+                <StackPanel x:Name="ToolBarStack" Padding="6,12" Spacing="2">
 
                     <Button Command="{x:Bind Vm.CaptureCommand}"
                             Background="Transparent" BorderThickness="0"
@@ -341,7 +345,7 @@
             </Border>
 
             <!-- ③-B 中央实时画面 -->
-            <Grid x:Name="PreviewContainer" Grid.Column="1" Background="Black">
+            <Grid x:Name="PreviewContainer" Grid.Row="1" Grid.Column="1" Background="Black">
 
                 <Image x:Name="PreviewSurface"
                        Stretch="Uniform"
@@ -575,7 +579,8 @@
 
             <!-- ③-C 右侧素材栏 -->
             <Border x:Name="RightPanel"
-                    Grid.Column="2"
+                    Grid.Row="1"
+                    Grid.Column="3"
                     Width="252"
                     Background="{ThemeResource LayerFillColorDefaultBrush}">
                 <Grid>
@@ -1004,6 +1009,16 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="界面" Style="{StaticResource BodyStrongTextBlockStyle}"/>
 
+                        <ComboBox x:Name="ToolbarPosBox"
+                                  Header="工具栏位置"
+                                  MinWidth="200" HorizontalAlignment="Left"
+                                  SelectionChanged="ToolbarPos_SelectionChanged">
+                            <ComboBoxItem Content="左侧（默认）"/>
+                            <ComboBoxItem Content="右侧"/>
+                            <ComboBoxItem Content="顶部"/>
+                            <ComboBoxItem Content="底部"/>
+                        </ComboBox>
+
                         <ComboBox x:Name="StatusBarPosBox"
                                   Header="状态栏位置"
                                   MinWidth="200" HorizontalAlignment="Left"
@@ -1031,6 +1046,13 @@
                         <ToggleSwitch Header="记住上次使用的设备"
                                       OnContent="开" OffContent="关"
                                       IsOn="{x:Bind Vm.Settings.RememberLastDevice, Mode=TwoWay}"/>
+
+                        <ComboBox x:Name="DefaultDeviceBox"
+                                  Header="默认设备（下次自动连接它）"
+                                  MinWidth="240" HorizontalAlignment="Left"
+                                  ItemsSource="{x:Bind Vm.Devices}"
+                                  DisplayMemberPath="Name"
+                                  SelectionChanged="DefaultDevice_SelectionChanged"/>
 
                         <TextBlock Text="{x:Bind Vm.LastDeviceText, Mode=OneWay}"
                                    FontSize="11"
