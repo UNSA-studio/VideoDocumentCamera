@@ -221,8 +221,23 @@ public sealed class WinRtCameraService : ICameraService
 
             Log($"[VP-WinRT] 视频源：{_frameSource.Info?.DeviceInformation?.Name}");
 
-            // BGRA8 —— 后续所有处理（显示 / 截图 / 录像）都基于这个格式
-            _frameReader = _capture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8)
+            // ── 选择设备支持的【最优格式】 ──
+            //
+            // ⚠ 不要用 CreateFrameReaderAsync(source, Bgra8) 直接要 BGRA8：
+            //   那等于强制系统走"实时格式转换"管道，很多展台在转换时
+            //   只能跑 10fps 左右（实测希沃展台就是这样）。
+            //
+            //   正确做法：先看设备原生支持哪些格式，挑一个分辨率/帧率最高的，
+            //   用 SetFormatAsync 设上去，再创建 reader（不指定输出格式，
+            //   即使用源的原生格式），最后由我们自己转成 BGRA8。
+            SelectBestFormat();
+
+            if (_frameSource is null)
+            {
+                return Fail("设备没有可用的视频源");
+            }
+
+            _frameReader = _capture.CreateFrameReaderAsync(_frameSource)
                                    .AsTask().GetAwaiter().GetResult();
 
             _frameReader.FrameArrived += OnFrameArrived;
@@ -241,6 +256,65 @@ public sealed class WinRtCameraService : ICameraService
         {
             Log($"[VP-WinRT] 打开设备失败：{ex}");
             return Fail(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 在设备支持的格式里挑一个最优的：优先分辨率，其次帧率。
+    ///
+    /// <para><b>为什么要自己挑</b></para>
+    /// <para>
+    /// MediaCapture 默认会选一个"能跑通"的格式，但对 USB 展台来说，
+    /// 默认值常常是低帧率的那档（实测出现 10fps）。这里把设备支持的全部格式
+    /// 打印出来并显式设置，用户日志里也就有了依据。
+    /// </para>
+    /// </summary>
+    private void SelectBestFormat()
+    {
+        if (_frameSource is null) return;
+
+        try
+        {
+            var formats = _frameSource.SupportedFormats;
+            if (formats is null || formats.Count == 0)
+            {
+                Log("[VP-WinRT] 设备未报告支持的格式，沿用默认");
+                return;
+            }
+
+            foreach (var f in formats)
+            {
+                var v = f.VideoFormat;
+                Log($"[VP-WinRT]   支持格式：{v?.Width}×{v?.Height} @ {f.FrameRate:F0}fps  {f.Subtype}");
+            }
+
+            // 目标：最大分辨率；同分辨率取最高帧率
+            var best = formats
+                .Where(f => f.VideoFormat is not null)
+                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
+                .ThenByDescending(f => f.FrameRate)
+                .FirstOrDefault();
+
+            // 但纯按分辨率排序可能选到 4K@5fps —— 那种反而更糟。
+            // 折中：限定"至少 20fps"，在这个前提下再挑最大分辨率。
+            var smooth = formats
+                .Where(f => f.VideoFormat is not null && f.FrameRate >= 20)
+                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
+                .ThenByDescending(f => f.FrameRate)
+                .FirstOrDefault();
+
+            var chosen = smooth ?? best;
+            if (chosen is null) return;
+
+            Log($"[VP-WinRT] 选择格式：{chosen.VideoFormat.Width}×{chosen.VideoFormat.Height} "
+              + $"@ {chosen.FrameRate:F0}fps  {chosen.Subtype}");
+
+            _frameSource.SetFormatAsync(chosen).AsTask().GetAwaiter().GetResult();
+            Log("[VP-WinRT] 格式已设置");
+        }
+        catch (Exception ex)
+        {
+            Log($"[VP-WinRT] 选择格式失败（沿用默认）：{ex.Message}");
         }
     }
 
