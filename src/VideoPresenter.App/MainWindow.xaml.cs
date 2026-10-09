@@ -279,15 +279,30 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        // Esc：设置浮层开着就先关浮层（优先于"退出全屏"）。
-        // 用窗口消息而不是 XAML 的 KeyboardAccelerator —— 后者在浮层与焦点元素之间
-        // 容易互相干扰（加速器作用域、Popup 焦点），窗口级消息最直接可靠。
-        if (uMsg == 0x0100 /* WM_KEYDOWN */
-            && wParam.ToInt32() == 0x1B /* VK_ESCAPE */
-            && _settingsOpen)
+        // ── 键盘快捷键（窗口级处理）──
+        //
+        // 为什么不用 XAML 的 KeyboardAccelerator：
+        //   WinUI 3 的 KeyboardAccelerator 会在鼠标/触摸【悬停到所属元素】时
+        //   弹出按键提示气泡；而它注册在 RootGrid 上会覆盖整个窗口 ——
+        //   表现就是"指针移到画面区域就冒出一个 Esc 键盘帽"。
+        //   窗口消息没有任何视觉副作用。
+        if (uMsg == 0x0100 /* WM_KEYDOWN */)
         {
-            HideSettings();
-            return IntPtr.Zero;
+            int vk = wParam.ToInt32();
+
+            if (vk == 0x1B /* VK_ESCAPE */)
+            {
+                // 设置浮层开着 → 先关浮层；否则切换全屏
+                if (_settingsOpen) { HideSettings(); return IntPtr.Zero; }
+                SetFullScreen(!_isFullScreen);
+                return IntPtr.Zero;
+            }
+
+            if (vk == 0x7A /* VK_F11 */)
+            {
+                SetFullScreen(!_isFullScreen);
+                return IntPtr.Zero;
+            }
         }
 
         return Win32.DefSubclassProc(hWnd, uMsg, wParam, lParam);
@@ -1743,13 +1758,6 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Esc / F11 —— 切换全屏。</summary>
-    private void FullScreenAccelerator_Invoked(KeyboardAccelerator sender,
-                                               KeyboardAcceleratorInvokedEventArgs args)
-    {
-        SetFullScreen(!_isFullScreen);
-        args.Handled = true;
-    }
-
     private void CenterOnScreen()
     {
         try

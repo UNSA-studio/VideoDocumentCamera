@@ -46,10 +46,17 @@
               Ctrl+Alt+P —— 拍照
               Ctrl+Alt+F —— 切换全屏
         -->
-        <Grid.KeyboardAccelerators>
-            <KeyboardAccelerator Key="Escape" Invoked="FullScreenAccelerator_Invoked"/>
-            <KeyboardAccelerator Key="F11" Invoked="FullScreenAccelerator_Invoked"/>
-        </Grid.KeyboardAccelerators>
+        <!--
+            ⚠ 这里【不能】用 KeyboardAccelerator 注册 Escape / F11。
+
+            WinUI 3 的 KeyboardAccelerator 会在鼠标（或触摸）悬停到其所属元素时
+            自动弹出一个「按键提示气泡」—— 而它注册在 RootGrid 上，覆盖整个窗口，
+            于是只要指针移到画面区域就会冒出一个 "Esc" 键盘帽，
+            看起来像是程序在画面上乱画东西。
+
+            快捷键改由 MainWindow 的窗口消息（SubclassProc）处理，
+            行为一致且不产生任何视觉提示。
+        -->
 
         <Grid.RowDefinitions>
             <RowDefinition Height="48"/>    <!-- 0 标题栏（可拖拽） -->
