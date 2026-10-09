@@ -57,10 +57,16 @@ internal unsafe interface IMemoryBufferByteAccess
 }
 
 /// <summary>
-/// 基于 WinRT <see cref="MediaCapture"/> 的采集实现。
-/// </summary>
-public sealed class WinRtCameraService : ICameraService
-{
+    /// 基于 WinRT <see cref="MediaCapture"/> 的采集实现。
+    /// </summary>
+    public sealed class WinRtCameraService : ICameraService
+    {
+        public WinRtCameraService()
+        {
+            // 采集回调在后台线程，帧通知必须经 DispatcherQueue 投递到 UI 线程
+            _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        }
+
     private readonly List<CameraDevice> _devices = new();
     private readonly List<string> _deviceIds = new();   // 与 _devices 一一对应
 
@@ -74,11 +80,23 @@ public sealed class WinRtCameraService : ICameraService
     private long _frameCount;
     private long _fpsWindowStart;
     private double _fps;
+
+    private long _displayFrames;
+    private long _displayWindowStart;
+    private double _displayFps;
+
+    /// <summary>UI 线程派发器（帧通知必须投递到 UI 线程）。</summary>
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
+
     private volatile bool _running;
 
     public IReadOnlyList<CameraDevice> Devices => _devices;
     public bool IsRunning => _running;
+    /// <summary>接口帧率：对外暴露的是【采集帧率】（设备给帧速度）。</summary>
     public double Fps => _fps;
+
+    /// <summary>界面显示帧率（渲染到屏幕的速度，远程桌面下会明显偏低）。</summary>
+    public double DisplayFps => _displayFps;
 
     public event EventHandler<SoftwareBitmap>? FrameArrived;
     public event EventHandler<string>? StatusChanged;
@@ -336,14 +354,33 @@ public sealed class WinRtCameraService : ICameraService
 
             using var src = video.SoftwareBitmap;
 
-            // 统一转成 BGRA8（某些设备原生是 NV12 / YUY2）
+            // 统一转成 BGRA8（设备原生常见 NV12 / YUY2）
             var converted = SoftwareBitmap.Convert(src, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
 
             var old = Interlocked.Exchange(ref _latest, converted);
             old?.Dispose();
 
+            // 采集帧率：纯统计"设备给了多少帧"，不包含界面渲染开销
             UpdateFps();
-            FrameArrived?.Invoke(this, converted);
+
+            // ⚠ 通知界面用【异步】派发，绝不在采集回调里同步调用。
+            //
+            //   原先是 FrameArrived?.Invoke(...) —— 界面处理（尤其是屏幕编码 /
+            //   远程传输）会把耗时算进采集回调，直接回压到设备，
+            //   表现为 UU 远程时帧率掉到个位数。
+            //
+            //   现在只投递一个"有新帧"的信号，界面自己去取最新帧；
+            //   界面慢的时候丢的是中间帧，而不是拖慢采集。
+            var handler = FrameArrived;
+            if (handler is not null)
+            {
+                _dispatcher?.TryEnqueue(() =>
+                {
+                    var cur = _latest;
+                    if (cur is not null) handler(this, cur);
+                    UpdateDisplayFps();
+                });
+            }
         }
         catch (Exception ex)
         {
@@ -351,6 +388,7 @@ public sealed class WinRtCameraService : ICameraService
         }
     }
 
+    /// <summary>采集帧率（设备实际给帧的速度）。</summary>
     private void UpdateFps()
     {
         _frameCount++;
@@ -362,6 +400,21 @@ public sealed class WinRtCameraService : ICameraService
             _fps = _frameCount * 1000.0 / elapsed;
             _frameCount = 0;
             _fpsWindowStart = now;
+        }
+    }
+
+    /// <summary>界面显示帧率（渲染到屏幕的速度，受远程桌面等影响）。</summary>
+    private void UpdateDisplayFps()
+    {
+        _displayFrames++;
+        long now = Environment.TickCount64;
+        long elapsed = now - _displayWindowStart;
+
+        if (elapsed >= 1000)
+        {
+            _displayFps = _displayFrames * 1000.0 / elapsed;
+            _displayFrames = 0;
+            _displayWindowStart = now;
         }
     }
 

@@ -345,7 +345,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void UpdateFrameInfo(int width, int height)
     {
         ResolutionText = $"{width}×{height}";
-        FpsText = _camera.Fps > 0 ? $"{_camera.Fps:F0} fps" : "—";
+
+        // 显示两个帧率：
+        //   前一个 = 采集帧率（设备实际给帧速度，反映设备能力）
+        //   后一个 = 显示帧率（渲染上屏速度，远程桌面下会明显偏低）
+        // 两者差距大 → 瓶颈在界面/网络，而不是设备。
+        if (_camera.Fps <= 0)
+        {
+            FpsText = "—";
+        }
+        else if (_camera is Services.WinRtCameraService winrt)
+        {
+            FpsText = $"{_camera.Fps:F0}/{winrt.DisplayFps:F0} fps";
+        }
+        else
+        {
+            FpsText = $"{_camera.Fps:F0} fps";
+        }
     }
 
     private void RefreshDevices()
