@@ -495,9 +495,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         using var still = await AcquireFrameAsync();
         if (still is null)
         {
-            StatusText = "当前没有可用画面";
+            Services.WinRtCameraService.Log("[VP] 拍照失败：拿不到当前帧（GrabStill 返回 null）");
+            StatusText = "拍照失败：当前没有可用画面";
             return;
         }
+
+        Services.WinRtCameraService.Log($"[VP] 拍照：取得帧 {still.PixelWidth}×{still.PixelHeight}");
 
         try
         {

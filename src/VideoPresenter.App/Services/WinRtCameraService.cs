@@ -77,6 +77,16 @@ internal unsafe interface IMemoryBufferByteAccess
     /// <summary>最近一帧（复用的位图，供界面显示）。</summary>
     private SoftwareBitmap? _latest;
 
+    /// <summary>
+    /// 上一帧。
+    /// <para>
+    /// 用于"延迟一帧释放"：界面显示与 GrabStill()（拍照）都可能仍在引用
+    /// _latest，所以不能在新帧到来时立刻 Dispose 它 —— 那会让拍照
+    /// 拿到已释放的对象、静默失败。
+    /// </para>
+    /// </summary>
+    private SoftwareBitmap? _previous;
+
     private long _frameCount;
     private long _fpsWindowStart;
     private double _fps;
@@ -120,7 +130,12 @@ internal unsafe interface IMemoryBufferByteAccess
 
     private static readonly object LogGate = new();
 
-    private static void Log(string message)
+    /// <summary>
+    /// 写一行诊断日志。
+    /// <para>internal 而非 private：View / ViewModel 也要用它记录拍照等失败原因 ——
+    /// 那些地方原先用 Debug.WriteLine，用户在日志里根本看不到。</para>
+    /// </summary>
+    internal static void Log(string message)
     {
         try
         {
@@ -366,8 +381,19 @@ foreach (var f in formats)
             // 统一转成 BGRA8（设备原生常见 NV12 / YUY2）
             var converted = SoftwareBitmap.Convert(src, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
 
+            // ── 双缓冲：延迟一帧释放 ──
+            //
+            // ⚠ 不能立刻 Dispose 旧帧：
+            //   它可能正被界面显示、或被 GrabStill() 复制（拍照）。
+            //   之前就是在这里立刻 old?.Dispose()，导致拍照时
+            //   SoftwareBitmap.Copy 抛异常 → GrabStill 返回 null →
+            //   拍照静默失败（状态栏只说"当前没有可用画面"）。
+            //
+            //   现在保留"当前 + 上一帧"两个引用，释放的是更早那一帧 ——
+            //   到那时它已不可能仍在使用。
+            var previous = Interlocked.Exchange(ref _previous, null);
             var old = Interlocked.Exchange(ref _latest, converted);
-            old?.Dispose();
+            previous?.Dispose();
 
             // 采集帧率：纯统计"设备给了多少帧"，不包含界面渲染开销
             UpdateFps();
@@ -451,6 +477,9 @@ foreach (var f in formats)
 
             var old = Interlocked.Exchange(ref _latest, null);
             old?.Dispose();
+
+            var prev = Interlocked.Exchange(ref _previous, null);
+            prev?.Dispose();
 
             _fps = 0;
             Log("[VP-WinRT] 已停止预览");
