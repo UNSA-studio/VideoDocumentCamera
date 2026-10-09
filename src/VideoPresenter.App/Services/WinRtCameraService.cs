@@ -36,6 +36,7 @@ using Windows.Graphics.Imaging;
 using Windows.Media.Capture;
 using Windows.Media.Capture.Frames;
 using Windows.Media.Core;
+using Windows.Media.MediaProperties;
 
 namespace VideoPresenter.App.Services;
 
@@ -199,7 +200,7 @@ public sealed class WinRtCameraService : ICameraService
                 StreamingCaptureMode = StreamingCaptureMode.Video,
 
                 // CPU 内存：这样 SoftwareBitmap 可以直接读像素
-                MemoryPreference = MediaMemoryPreference.Cpu,
+                MemoryPreference = MediaCaptureMemoryPreference.Cpu,
 
                 // 共享只读：允许多个程序同时用（希沃展台可能也在开着的）
                 SharingMode = MediaCaptureSharingMode.SharedReadOnly,
@@ -210,7 +211,7 @@ public sealed class WinRtCameraService : ICameraService
 
             // 选一个彩色视频源（展台就是普通彩色摄像头）
             _frameSource = _capture.FrameSources.Values
-                .FirstOrDefault(s => s.SourceKind == MediaFrameSourceKind.Color)
+                .FirstOrDefault(s => s.Info?.SourceKind == MediaFrameSourceKind.Color)
                 ?? _capture.FrameSources.Values.FirstOrDefault();
 
             if (_frameSource is null)
