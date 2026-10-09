@@ -303,29 +303,29 @@ internal unsafe interface IMemoryBufferByteAccess
             foreach (var f in formats)
             {
                 var v = f.VideoFormat;
-                Log($"[VP-WinRT]   支持格式：{v?.Width}×{v?.Height} @ {f.FrameRate:F0}fps  {f.Subtype}");
+                Log($"[VP-WinRT]   支持格式：{v?.Width}×{v?.Height} @ {Fps(f)}fps  {f.Subtype}");
             }
 
             // 目标：最大分辨率；同分辨率取最高帧率
             var best = formats
                 .Where(f => f.VideoFormat is not null)
                 .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                .ThenByDescending(f => f.FrameRate)
+                .ThenByDescending(Fps)
                 .FirstOrDefault();
 
             // 但纯按分辨率排序可能选到 4K@5fps —— 那种反而更糟。
             // 折中：限定"至少 20fps"，在这个前提下再挑最大分辨率。
             var smooth = formats
-                .Where(f => f.VideoFormat is not null && f.FrameRate >= 20)
+                .Where(f => f.VideoFormat is not null && Fps(f) >= 20)
                 .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                .ThenByDescending(f => f.FrameRate)
+                .ThenByDescending(Fps)
                 .FirstOrDefault();
 
             var chosen = smooth ?? best;
             if (chosen is null) return;
 
             Log($"[VP-WinRT] 选择格式：{chosen.VideoFormat.Width}×{chosen.VideoFormat.Height} "
-              + $"@ {chosen.FrameRate:F0}fps  {chosen.Subtype}");
+              + $"@ {Fps(chosen)}fps  {chosen.Subtype}");
 
             _frameSource.SetFormatAsync(chosen).AsTask().GetAwaiter().GetResult();
             Log("[VP-WinRT] 格式已设置");
@@ -334,6 +334,15 @@ internal unsafe interface IMemoryBufferByteAccess
         {
             Log($"[VP-WinRT] 选择格式失败（沿用默认）：{ex.Message}");
         }
+    }
+
+    /// <summary>把 MediaRatio 形式的帧率转成数字（MediaRatio 不能直接与数字比较）。</summary>
+    private static double Fps(MediaFrameFormat format)
+    {
+        var r = format.FrameRate;
+        if (r is null || r.Denominator == 0) return 0;
+
+        return (double)r.Numerator / r.Denominator;
     }
 
     private bool Fail(string message)
