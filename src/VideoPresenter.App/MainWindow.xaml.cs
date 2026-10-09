@@ -53,7 +53,7 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
-        _camera = new MediaFoundationCameraService();
+        _camera = new WinRtCameraService();
         Vm = new MainViewModel(_camera);
 
         InitializeComponent();
@@ -245,6 +245,7 @@ public sealed partial class MainWindow : Window
             ApplyGuides();
             ApplyStatusBarPosition();
             ApplyToolbarPosition();
+            ApplyWindowChrome();
             ApplyAutoStart(Vm.Settings.AutoStartWithWindows);
 
             App.ReportWindowReady(this);
@@ -1305,6 +1306,25 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>应用窗口外观设置。</summary>
+    private void ApplyWindowChrome()
+    {
+        try
+        {
+            if (AppWindow.Presenter is not OverlappedPresenter p) return;
+
+            // 用户要求去掉系统绘制的「最小化 / 最大化 / 关闭」按钮：
+            // 这些按钮由 Windows 画在标题栏右上角，无法单独隐藏其中一个，
+            // 只能整体关闭标题栏。关闭后窗口边框仍保留（可缩放），
+            // 拖动与关闭改由界面内的标题条 / 命令栏按钮负责。
+            p.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 设置窗口外观失败：{ex.Message}");
+        }
+    }
+
     /// <summary>最小化窗口。</summary>
     private void Minimize_Click(object sender, RoutedEventArgs e)
     {
@@ -1670,7 +1690,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            string dir = Path.GetDirectoryName(MediaFoundationCameraService.LogFilePath)!;
+            string dir = Path.GetDirectoryName(WinRtCameraService.LogFilePath)!;
             Directory.CreateDirectory(dir);
             Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
         }

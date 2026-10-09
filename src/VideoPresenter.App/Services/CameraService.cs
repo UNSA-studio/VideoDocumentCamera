@@ -1006,13 +1006,8 @@ private void ReadLoop()
     private static extern int MFCreateDeviceSource(IntPtr pAttributes, out IntPtr ppSource);
 
     /// <summary>WinRT 缓冲的原始指针访问接口（写 SoftwareBitmap 用）。</summary>
-    [ComImport]
-    [Guid("5B0D3235-4DBA-4D44-865E-8F1D0E4FD04D")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal unsafe interface IMemoryBufferByteAccess
-    {
-        void GetBuffer(out byte* buffer, out uint capacity);
-    }
+    // ⚠ 该接口已提升到命名空间级（见 WinRtCameraService.cs），
+    //   因为 WinRT 与 MF 两套采集实现都要用到它。
 
     // ─────────────────────────── COM 接口 ───────────────────────────
     //  vtable 顺序必须与 Windows SDK 头文件完全一致，未使用的方法也不能删除。

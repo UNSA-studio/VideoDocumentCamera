@@ -360,7 +360,7 @@ public sealed class RecordingService : IDisposable
 
         try
         {
-            string file = MediaFoundationCameraService.LogFilePath;
+            string file = WinRtCameraService.LogFilePath;
             var fi = new FileInfo(file);
             if (fi.Exists && fi.Length > 1024 * 1024) fi.Delete();
 

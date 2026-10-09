@@ -277,7 +277,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// 只靠界面没法判断，日志文件才是排查依据。
     /// </para>
     /// </summary>
-    public string LogFilePathText => "诊断日志：" + Services.MediaFoundationCameraService.LogFilePath;
+    public string LogFilePathText => "诊断日志：" + Services.WinRtCameraService.LogFilePath;
 
     /// <summary>版本信息（设置面板里展示）。</summary>
     public string VersionText => "视频展台 v1.0.0  ·  UNSA Studio";
