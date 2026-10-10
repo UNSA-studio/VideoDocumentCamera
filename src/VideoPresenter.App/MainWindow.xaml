@@ -634,37 +634,14 @@
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="vm:SnapshotItem">
-                                <Grid Padding="4" Margin="0,0,0,4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-
-                                    <Border Width="88" Height="60"
-                                            CornerRadius="4"
-                                            Background="{ThemeResource ControlFillColorSecondaryBrush}">
-                                        <Image Source="{x:Bind Thumbnail}"
-                                               Stretch="UniformToFill"/>
-                                    </Border>
-
-                                    <StackPanel Grid.Column="1"
-                                                Margin="10,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Spacing="3">
-                                        <TextBlock Text="{x:Bind FileName}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{x:Bind DimensionText}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}">
-                                            <Run Text="{x:Bind TimeText}"/>
-                                            <Run Text=" · "/>
-                                            <Run Text="{x:Bind SizeText}"/>
-                                        </TextBlock>
-                                    </StackPanel>
-                                </Grid>
+                                <!-- 只显示照片本身（用户要求：不显示文件名 / 尺寸 / 大小） -->
+                                <Border Width="216" Height="122"
+                                        Margin="0,0,0,6"
+                                        CornerRadius="6"
+                                        Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                    <Image Source="{x:Bind Thumbnail}"
+                                           Stretch="UniformToFill"/>
+                                </Border>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>

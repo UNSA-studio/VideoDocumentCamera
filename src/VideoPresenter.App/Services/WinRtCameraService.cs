@@ -77,6 +77,9 @@ internal unsafe interface IMemoryBufferByteAccess
     /// <summary>最近一帧（复用的位图，供界面显示）。</summary>
     private SoftwareBitmap? _latest;
 
+    /// <summary>帧格式只打印一次，避免日志刷屏。</summary>
+    private bool _logFormatOnce = true;
+
     /// <summary>
     /// 上一帧。
     /// <para>
@@ -270,7 +273,16 @@ internal unsafe interface IMemoryBufferByteAccess
                 return Fail("设备没有可用的视频源");
             }
 
-            _frameReader = _capture.CreateFrameReaderAsync(_frameSource)
+            // 让系统直接把帧转成 BGRA8。
+            //
+            // ⚠ 之前为了"省开销"改成不指定输出格式 + 自己 SoftwareBitmap.Convert，
+            //   结果画面一片绿 —— 那是 NV12 的 UV 平面被按 BGRA 解析导致的
+            //   典型通道错位。自己转 YUV 太容易踩坑，交回给 MediaFrameReader
+            //   的内建转换最稳。
+            //
+            //   代价是转换开销，但配合"预览分辨率限制在 1080p 以内"，
+            //   这个开销是可以接受的（720p/1080p 的 BGRA 远小于 800 万像素）。
+            _frameReader = _capture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8)
                                    .AsTask().GetAwaiter().GetResult();
 
             _frameReader.FrameArrived += OnFrameArrived;
@@ -394,8 +406,25 @@ internal unsafe interface IMemoryBufferByteAccess
 
             using var src = video.SoftwareBitmap;
 
-            // 统一转成 BGRA8（设备原生常见 NV12 / YUY2）
-            var converted = SoftwareBitmap.Convert(src, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            // 系统已经按 BGRA8 输出（见 CreateFrameReaderAsync 的说明），
+            // 这里只需确保颜色模式一致；SoftwareBitmap.Convert 对同格式是廉价操作。
+            SoftwareBitmap converted;
+            if (src.BitmapPixelFormat == BitmapPixelFormat.Bgra8 &&
+                src.BitmapAlphaMode == BitmapAlphaMode.Premultiplied)
+            {
+                converted = SoftwareBitmap.Copy(src);
+            }
+            else
+            {
+                converted = SoftwareBitmap.Convert(src, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            }
+
+            if (_logFormatOnce)
+            {
+                _logFormatOnce = false;
+                Log($"[VP-WinRT] 帧格式：源 {src.BitmapPixelFormat}/{src.BitmapAlphaMode} "
+                  + $"{src.PixelWidth}×{src.PixelHeight} → 输出 {converted.BitmapPixelFormat}");
+            }
 
             // ── 双缓冲：延迟一帧释放 ──
             //
