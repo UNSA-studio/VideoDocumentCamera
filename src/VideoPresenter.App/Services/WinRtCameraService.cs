@@ -278,16 +278,17 @@ internal unsafe interface IMemoryBufferByteAccess
                 return Fail("设备没有可用的视频源");
             }
 
-            // 让系统直接把帧转成 BGRA8。
+            // ★ 不指定输出格式：直接拿设备的【原生格式】（本机是 NV12）。
             //
-            // ⚠ 之前为了"省开销"改成不指定输出格式 + 自己 SoftwareBitmap.Convert，
-            //   结果画面一片绿 —— 那是 NV12 的 UV 平面被按 BGRA 解析导致的
-            //   典型通道错位。自己转 YUV 太容易踩坑，交回给 MediaFrameReader
-            //   的内建转换最稳。
+            // 为什么不再要求 Bgra8：
+            //   ① WinUI 的 SoftwareBitmapSource 本身就能显示 NV12，
+            //      显示时由 GPU 做色彩空间转换 —— 这是它最擅长的活。
+            //   ② 在 CPU 上逐帧转 BGRA 既慢（8MB/帧拷贝 + 色彩换算）又易错：
+            //      之前"画面全绿"就是手动转 YUV 时通道错位造成的。
             //
-            //   代价是转换开销，但配合"预览分辨率限制在 1080p 以内"，
-            //   这个开销是可以接受的（720p/1080p 的 BGRA 远小于 800 万像素）。
-            _frameReader = _capture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8)
+            // 结论：预览走原生格式，转换只在真正需要像素的场景（拍照 / 录像）
+            //       临时做一次，而且那时是一次性的，不影响实时帧率。
+            _frameReader = _capture.CreateFrameReaderAsync(_frameSource)
                                    .AsTask().GetAwaiter().GetResult();
 
             _frameReader.FrameArrived += OnFrameArrived;
@@ -414,18 +415,12 @@ internal unsafe interface IMemoryBufferByteAccess
 
             using var src = video.SoftwareBitmap;
 
-            // 系统已经按 BGRA8 输出（见 CreateFrameReaderAsync 的说明），
-            // 这里只需确保颜色模式一致；SoftwareBitmap.Convert 对同格式是廉价操作。
-            SoftwareBitmap converted;
-            if (src.BitmapPixelFormat == BitmapPixelFormat.Bgra8 &&
-                src.BitmapAlphaMode == BitmapAlphaMode.Premultiplied)
-            {
-                converted = SoftwareBitmap.Copy(src);
-            }
-            else
-            {
-                converted = SoftwareBitmap.Convert(src, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-            }
+            // ★ 直接复制原生帧，【不做任何格式转换】。
+            //
+            //   显示交给 WinUI（GPU 转色彩），我们只负责把这一帧安全地留一份。
+            //   SoftwareBitmap.Copy 保留原格式与像素数据，是一次纯内存拷贝 ——
+            //   比 CPU 色彩转换便宜得多，而且绝不会出现通道错位（绿屏）。
+            var converted = SoftwareBitmap.Copy(src);
 
             long t2 = Stopwatch.GetTimestamp();
 
@@ -576,7 +571,9 @@ internal unsafe interface IMemoryBufferByteAccess
 
         try
         {
-            return SoftwareBitmap.Copy(cur);
+            // 预览走原生格式（NV12），但拍照 / 编码需要标准 BGRA8，
+            // 所以在这里做一次性转换 —— 只在用户按快门时发生，不影响帧率。
+            return SoftwareBitmap.Convert(cur, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
         }
         catch (Exception ex)
         {
@@ -590,19 +587,26 @@ internal unsafe interface IMemoryBufferByteAccess
         var cur = _latest;
         if (cur is null) return null;
 
+        SoftwareBitmap? bgra = null;
         try
         {
-            int w = cur.PixelWidth, h = cur.PixelHeight;
-            int stride = w * 4;
-            var bytes = new byte[stride * h];
+            // 录像同样需要 BGRA（编码器与我们的 stride 假设都基于它）
+            bgra = SoftwareBitmap.Convert(cur, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
 
-            CopyOut(cur, bytes);
+            int w = bgra.PixelWidth, h = bgra.PixelHeight;
+            var bytes = new byte[w * 4 * h];
+
+            CopyOut(bgra, bytes);
             return bytes;
         }
         catch (Exception ex)
         {
             Log($"[VP-WinRT] 取原始像素失败：{ex.Message}");
             return null;
+        }
+        finally
+        {
+            bgra?.Dispose();
         }
     }
 
