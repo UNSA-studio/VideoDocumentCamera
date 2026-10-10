@@ -8,22 +8,22 @@
 | 文件 | 大小 |
 | --- | --- |
 | `vdc-1.0.0-x64-setup.exe` | 49.9 MB |
-| `vdc-1.0.0-x64.msi` | 59.7 MB |
+| `vdc-1.0.0-x64.msi` | 59.6 MB |
 
 ---
 
 * 构建时间：
-2026-10-05 17:02:42
+2026-10-10 10:02:19
  UTC
 * 源码提交：`
-f1c910bb22ea8d3938a2b029ac7e62b932885a14
+78b2247575dd4e18ff8799de69d4afea14237004
 `
 * 流水线：
 https://github.com
 /
 UNSA-studio/VideoDocumentCamera
 /actions/runs/
-37344923102
+38043316009
 
 > 需要历史版本或更小的分发体积，请使用 **Releases** 页面；
 > 需要便携版（解压即用）请到 Actions 的 Artifacts 下载。
