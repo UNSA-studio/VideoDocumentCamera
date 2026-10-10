@@ -1340,6 +1340,88 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ══════════════════════ 画面缩放 / 平移 ══════════════════════
+    //
+    // 对标希沃的"画面缩放、移动"：老师看试卷细节、比对笔迹时要用。
+    // 变换加在整个预览容器上（画面 + 批注一起走），保证批注不错位。
+
+    private double _zoom = 1.0;
+    private bool _panning;
+    private Windows.Foundation.Point _panStart;
+    private double _panOriginX, _panOriginY;
+
+    private const double MinZoom = 0.5;
+    private const double MaxZoom = 8.0;
+
+    /// <summary>滚轮缩放（以容器中心为基准）。</summary>
+    private void Preview_WheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(PreviewContainer);
+        int delta = pt.Properties.MouseWheelDelta;
+
+        double factor = delta > 0 ? 1.15 : 1 / 1.15;
+        double next = Math.Clamp(_zoom * factor, MinZoom, MaxZoom);
+        if (Math.Abs(next - _zoom) < 0.0001) return;
+
+        _zoom = next;
+        PreviewScale.ScaleX = _zoom;
+        PreviewScale.ScaleY = _zoom;
+        Vm.SetStatus($"画面缩放 {_zoom * 100:F0}%（双击复位）");
+        e.Handled = true;
+    }
+
+    /// <summary>中键 / 右键拖动平移。</summary>
+    private void Preview_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(PreviewContainer);
+
+        bool middle = pt.Properties.IsMiddleButtonPressed;
+        bool right = pt.Properties.IsRightButtonPressed;
+
+        // 左键留给批注，这里只响应中键 / 右键
+        if (!middle && !right) return;
+
+        _panning = true;
+        _panStart = pt.Position;
+        _panOriginX = PreviewTranslate.X;
+        _panOriginY = PreviewTranslate.Y;
+
+        try { PreviewContainer.CapturePointer(e.Pointer); } catch { /* 忽略 */ }
+        e.Handled = true;
+    }
+
+    private void Preview_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_panning) return;
+
+        var pt = e.GetCurrentPoint(PreviewContainer);
+        PreviewTranslate.X = _panOriginX + (pt.Position.X - _panStart.X);
+        PreviewTranslate.Y = _panOriginY + (pt.Position.Y - _panStart.Y);
+        e.Handled = true;
+    }
+
+    private void Preview_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_panning) return;
+
+        _panning = false;
+        try { PreviewContainer.ReleasePointerCapture(e.Pointer); } catch { /* 忽略 */ }
+        e.Handled = true;
+    }
+
+    /// <summary>双击复位缩放与平移。</summary>
+    private void Preview_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        _zoom = 1.0;
+        PreviewScale.ScaleX = 1;
+        PreviewScale.ScaleY = 1;
+        PreviewTranslate.X = 0;
+        PreviewTranslate.Y = 0;
+
+        Vm.SetStatus("画面已复位");
+        e.Handled = true;
+    }
+
     /// <summary>最小化窗口。</summary>
     private void Minimize_Click(object sender, RoutedEventArgs e)
     {

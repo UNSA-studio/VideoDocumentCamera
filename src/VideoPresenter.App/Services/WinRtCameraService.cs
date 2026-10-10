@@ -25,7 +25,6 @@
 //  WinRT 的 MediaCapture 是投影 API（由 CsWinRT 生成，无需手写 IID），
 //  且是微软在 WinUI 3 上推荐的采集方案，因此改为本实现。
 // ============================================================================
-
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -79,6 +78,12 @@ internal unsafe interface IMemoryBufferByteAccess
 
     /// <summary>帧格式只打印一次，避免日志刷屏。</summary>
     private bool _logFormatOnce = true;
+
+    // ── 性能计时（每秒汇总一次，帮助定位瓶颈）──
+    private long _perfWindowStart = Environment.TickCount64;
+    private long _perfFrames;
+    private long _perfAcquireTicks;
+    private long _perfConvertTicks;
 
     /// <summary>
     /// 上一帧。
@@ -398,11 +403,14 @@ internal unsafe interface IMemoryBufferByteAccess
 
     private void OnFrameArrived(MediaFrameReader sender, MediaFrameArrivedEventArgs args)
     {
+        long t0 = Stopwatch.GetTimestamp();
         try
         {
             using var frame = sender.TryAcquireLatestFrame();
             var video = frame?.VideoMediaFrame;
             if (video?.SoftwareBitmap is null) return;
+
+            long t1 = Stopwatch.GetTimestamp();
 
             using var src = video.SoftwareBitmap;
 
@@ -418,6 +426,8 @@ internal unsafe interface IMemoryBufferByteAccess
             {
                 converted = SoftwareBitmap.Convert(src, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
             }
+
+            long t2 = Stopwatch.GetTimestamp();
 
             if (_logFormatOnce)
             {
@@ -440,8 +450,30 @@ internal unsafe interface IMemoryBufferByteAccess
             var old = Interlocked.Exchange(ref _latest, converted);
             previous?.Dispose();
 
+            // ── 性能计时 ──
+            // 每秒打印一次各阶段耗时，用来判断瓶颈在哪：
+            //   采集取帧(下) / 格式转换 / 通知投递
+            _perfAcquireTicks += t1 - t0;
+            _perfConvertTicks += t2 - t1;
+            _perfFrames++;
+
             // 采集帧率：纯统计"设备给了多少帧"，不包含界面渲染开销
             UpdateFps();
+
+            if (Environment.TickCount64 - _perfWindowStart >= 1000 && _perfFrames > 0)
+            {
+                double msPerTick = 1000.0 / Stopwatch.Frequency;
+
+                Log($"[VP-Perf] 帧数 {_perfFrames}  "
+                  + $"取帧 {_perfAcquireTicks * msPerTick / _perfFrames:F1}ms  "
+                  + $"转换 {_perfConvertTicks * msPerTick / _perfFrames:F1}ms  "
+                  + $"→ {_fps:F1} fps");
+
+                _perfFrames = 0;
+                _perfAcquireTicks = 0;
+                _perfConvertTicks = 0;
+                _perfWindowStart = Environment.TickCount64;
+            }
 
             // ⚠ 通知界面用【异步】派发，绝不在采集回调里同步调用。
             //

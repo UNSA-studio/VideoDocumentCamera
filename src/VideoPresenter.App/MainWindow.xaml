@@ -352,7 +352,32 @@
             </Border>
 
             <!-- ③-B 中央实时画面 -->
-            <Grid x:Name="PreviewContainer" Grid.Row="1" Grid.Column="1" Background="Black">
+<Grid x:Name="PreviewContainer" Grid.Row="1" Grid.Column="1" Background="Black"
+              PointerWheelChanged="Preview_WheelChanged"
+              PointerPressed="Preview_PointerPressed"
+              PointerMoved="Preview_PointerMoved"
+              PointerReleased="Preview_PointerReleased"
+              PointerCanceled="Preview_PointerReleased"
+              DoubleTapped="Preview_DoubleTapped">
+                <!--
+                    画面缩放 / 平移（对标希沃的"画面缩放、移动"）。
+
+                    变换施加在整个预览容器上（画面 + 批注层一起变换），
+                    这样批注的坐标永远与画面保持一致 —— 若只缩放图片，
+                    批注会与画面错位。
+
+                    交互：
+                      · 滚轮        → 以指针为中心缩放
+                      · 中键 / 右键拖动 → 平移
+                      · 双击        → 复位
+                -->
+                <Grid.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="PreviewScale" ScaleX="1" ScaleY="1"/>
+                        <TranslateTransform x:Name="PreviewTranslate" X="0" Y="0"/>
+                    </TransformGroup>
+                </Grid.RenderTransform>
+                <Grid.RenderTransformOrigin>0.5,0.5</Grid.RenderTransformOrigin>
 
                 <Image x:Name="PreviewSurface"
                        Stretch="Uniform"
