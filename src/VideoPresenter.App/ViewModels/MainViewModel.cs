@@ -511,15 +511,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             string ext = jpeg ? ".jpg" : ".png";
             string prefix = string.IsNullOrWhiteSpace(Settings.FileNamePrefix) ? "展台" : Settings.FileNamePrefix;
             string fileName = $"{prefix}_{now:yyyyMMdd_HHmmss_fff}{ext}";
-            string path = Path.Combine(SnapshotFolder, fileName);
 
-            using (var stream = await FileRandomAccessStream.OpenAsync(path, FileAccessMode.ReadWrite))
+            string folderPath = SnapshotFolder;
+            string path = Path.Combine(folderPath, fileName);
+
+            Services.WinRtCameraService.Log($"[VP] 保存目标：{path}");
+
+            // ⚠ 不要用 FileRandomAccessStream.OpenAsync(path, ...)：
+            //   它对"尚未存在的文件"行为不稳定，实测会抛
+            //   "Unable to find the specified file"（0x80070002）。
+            //   正确做法是先通过 StorageFolder 创建文件，再拿它的流。
+            var folder = await StorageFolder.GetFolderFromPathAsync(folderPath);
+            var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
+
+            using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
             {
                 BitmapEncoder encoder;
 
                 if (jpeg)
                 {
-                    // JPEG 可以指定画质（设置里 60~100）
                     var props = new BitmapPropertySet
                     {
                         ["ImageQuality"] = new BitmapTypedValue(Settings.JpegQuality / 100f, Windows.Foundation.PropertyType.Single),
@@ -528,13 +538,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
                 else
                 {
-                    // PNG 无损：板书 / 试卷等文本内容的最佳选择
                     encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
                 }
 
                 encoder.SetSoftwareBitmap(still);
                 await encoder.FlushAsync();
             }
+
+            Services.WinRtCameraService.Log($"[VP] 拍照成功：{fileName}");
 
             // 拍照提示音（可在设置里开关）
             if (Settings.CaptureSound)

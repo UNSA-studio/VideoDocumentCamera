@@ -293,18 +293,23 @@ internal unsafe interface IMemoryBufferByteAccess
     }
 
     /// <summary>
-    /// 在设备支持的格式里挑一个最优的：优先分辨率，其次帧率。
+    /// 在设备支持的格式里挑一个适合【实时预览】的。
     ///
-    /// <para><b>为什么要自己挑</b></para>
+    /// <para><b>⚠ 关键约束：必须限制分辨率上限</b></para>
     /// <para>
-    /// MediaCapture 默认会选一个"能跑通"的格式，但对 USB 展台来说，
-    /// 默认值常常是低帧率的那档（实测出现 10fps）。这里把设备支持的全部格式
-    /// 打印出来并显式设置，用户日志里也就有了依据。
+    /// 展台设备通常同时暴露"拍照模式"和"视频模式"的格式，
+    /// 前者可能高达 3264×2448（800 万像素）—— 那个分辨率跑 30fps，
+    /// 每帧 BGRA 就要 32 MB，光内存带宽就接近 1 GB/s，
+    /// 再加上逐帧格式转换，会把整机拖到卡死。
+    /// 所以这里硬性限制：预览分辨率不超过 1920×1080。
     /// </para>
     /// </summary>
     private void SelectBestFormat()
     {
         if (_frameSource is null) return;
+
+        // 预览分辨率上限：超过这个值的格式一律不考虑
+        const long MaxPreviewPixels = 1920L * 1080L;
 
         try
         {
@@ -315,28 +320,39 @@ internal unsafe interface IMemoryBufferByteAccess
                 return;
             }
 
-foreach (var f in formats)
+            foreach (var f in formats)
             {
                 var v = f.VideoFormat;
                 Log($"[VP-WinRT]   支持格式：{v?.Width}×{v?.Height} @ {FpsOf(f):F0}fps  {f.Subtype}");
             }
 
-            // 目标：最大分辨率；同分辨率取最高帧率
-            var best = formats
+            // ① 先筛"分辨率不超过 1080p 且帧率不小于 20"的候选
+            var candidates = formats
+                .Where(f => f.VideoFormat is not null
+                            && (long)f.VideoFormat.Width * f.VideoFormat.Height <= MaxPreviewPixels
+                            && FpsOf(f) >= 20)
+                .ToList();
+
+            // ② 候选里取分辨率最高的（最清晰），同分辨率取帧率最高的
+            var chosen = candidates
+                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
+                .ThenByDescending(FpsOf)
+                .FirstOrDefault();
+
+            // ③ 没有达标帧率的 → 退让：允许任意帧率，但仍限制在 1080p 以内
+            chosen ??= formats
+                .Where(f => f.VideoFormat is not null
+                            && (long)f.VideoFormat.Width * f.VideoFormat.Height <= MaxPreviewPixels)
+                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
+                .ThenByDescending(FpsOf)
+                .FirstOrDefault();
+
+            // ④ 实在没有 1080p 以内的 → 取所有格式里最"省"的那个（像素最少）
+            chosen ??= formats
                 .Where(f => f.VideoFormat is not null)
-                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                .ThenByDescending(FpsOf)
+                .OrderBy(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
                 .FirstOrDefault();
 
-            // 但纯按分辨率排序可能选到 4K@5fps —— 那种反而更糟。
-            // 折中：限定"至少 20fps"，在这个前提下再挑最大分辨率。
-            var smooth = formats
-                .Where(f => f.VideoFormat is not null && FpsOf(f) >= 20)
-                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                .ThenByDescending(FpsOf)
-                .FirstOrDefault();
-
-            var chosen = smooth ?? best;
             if (chosen is null) return;
 
             Log($"[VP-WinRT] 选择格式：{chosen.VideoFormat.Width}×{chosen.VideoFormat.Height} "
