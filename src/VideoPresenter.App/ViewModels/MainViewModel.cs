@@ -522,9 +522,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             //   "Unable to find the specified file"（0x80070002）。
             //   正确做法是先通过 StorageFolder 创建文件，再拿它的流。
             var folder = await StorageFolder.GetFolderFromPathAsync(folderPath);
-            var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
+            var newFile = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
 
-            using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+            using (var stream = await newFile.OpenAsync(FileAccessMode.ReadWrite))
             {
                 BitmapEncoder encoder;
 
