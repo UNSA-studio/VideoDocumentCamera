@@ -1455,25 +1455,14 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
     }
 
-    /// <summary>最小化窗口。</summary>
-    private void Minimize_Click(object sender, RoutedEventArgs e)
-    {
-        if (AppWindow.Presenter is OverlappedPresenter p) p.Minimize();
-    }
-
-    /// <summary>最大化 / 还原。</summary>
-    private void MaximizeRestore_Click(object sender, RoutedEventArgs e)
-    {
-        if (AppWindow.Presenter is not OverlappedPresenter p) return;
-
-        if (p.State == OverlappedPresenterState.Maximized) p.Restore();
-        else p.Maximize();
-    }
-
-    /// <summary>关闭窗口（复用带确认的退出流程）。</summary>
-    private void CloseWindow_Click(object sender, RoutedEventArgs e) => ExitApp_Click(sender, e);
-
-    /// <summary>退出程序（带二次确认，避免误点）。</summary>
+    /// <summary>
+    /// 退出程序（带二次确认）。
+    ///
+    /// <para>
+    /// 界面上已不再绘制关闭按钮（用户明确要求），
+    /// 但保留这个方法：Alt+F4 会走窗口关闭流程，未来若要加菜单项也用它。
+    /// </para>
+    /// </summary>
     private async void ExitApp_Click(object sender, RoutedEventArgs e)
     {
         try

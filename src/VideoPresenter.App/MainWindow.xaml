@@ -198,30 +198,17 @@
                         Background="{ThemeResource DividerStrokeColorDefaultBrush}"
                         Margin="4,0"/>
 
-                <!-- 窗口控制：最小化 / 最大化 / 关闭 -->
-                <Button Click="Minimize_Click"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="8"
-                        ToolTipService.ToolTip="最小化">
-                    <FontIcon Glyph="&#xE921;" FontSize="12"/>
-                </Button>
+                <!--
+                    ⚠ 这里【不再】绘制最小化 / 最大化 / 关闭按钮。
 
-                <Button Click="MaximizeRestore_Click"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="8"
-                        ToolTipService.ToolTip="最大化 / 还原">
-                    <FontIcon Glyph="&#xE922;" FontSize="12"/>
-                </Button>
+                    之前我在命令栏右侧自己画了一套（E921 / E922 / E8BB），
+                    本意是"替代被关闭的系统标题栏按钮"，结果成了画蛇添足 ——
+                    用户明确要求删掉。
 
-                <Button Click="CloseWindow_Click"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="8"
-                        ToolTipService.ToolTip="关闭">
-                    <FontIcon Glyph="&#xE8BB;" FontSize="12"/>
-                </Button>
+                    现在窗口控制方式：
+                      · 关闭：Alt+F4，或任务栏右键 → 关闭窗口
+                      · 拖动：按住命令栏空白处
+                -->
             </StackPanel>
         </Grid>
 
