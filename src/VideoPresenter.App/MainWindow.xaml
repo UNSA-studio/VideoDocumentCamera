@@ -329,6 +329,16 @@
                             Background="{ThemeResource DividerStrokeColorDefaultBrush}"
                             Margin="0,6"/>
 
+                    <Button Command="{x:Bind Vm.ScanCommand}"
+                            Background="Transparent" BorderThickness="0"
+                            Width="64" Height="58" Padding="0" CornerRadius="4"
+                            ToolTipService.ToolTip="扫描：自动裁边 + 透视矫正">
+                        <StackPanel Spacing="4">
+                            <FontIcon Glyph="&#xE8FE;" FontSize="18"/>
+                            <TextBlock Text="扫描" FontSize="11" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
                     <Button Command="{x:Bind Vm.ToggleFullScreenCommand}"
                             Background="Transparent" BorderThickness="0"
                             Width="64" Height="58" Padding="0" CornerRadius="4"

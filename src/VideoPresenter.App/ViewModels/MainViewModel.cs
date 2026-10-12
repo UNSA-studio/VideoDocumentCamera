@@ -103,6 +103,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         TogglePreviewCommand = new RelayCommand(TogglePreview, () => SelectedDevice is not null);
         CaptureCommand = new RelayCommand(() => _ = CaptureAsync(), () => _isPreviewing);
         BurstCaptureCommand = new RelayCommand(() => _ = BurstCaptureAsync(), () => _isPreviewing);
+        ScanCommand = new RelayCommand(() => _ = ScanAsync(), () => _isPreviewing);
         DeleteSnapshotCommand = new RelayCommand(DeleteSnapshot, () => _selectedSnapshot is not null);
         ClearSnapshotsCommand = new RelayCommand(ClearSnapshots, () => Snapshots.Count > 0);
         OpenFolderCommand = new RelayCommand(OpenSnapshotFolder);
@@ -322,6 +323,50 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand TogglePreviewCommand { get; }
     public ICommand CaptureCommand { get; }
     public ICommand BurstCaptureCommand { get; }
+
+    /// <summary>
+    /// 扫描：自动裁边 + 透视矫正（对标希沃的一键扫描）。
+    /// </summary>
+    public ICommand ScanCommand { get; }
+
+    /// <summary>
+    /// 扫描实现：取当前帧 → 找纸张四边 → 拉正 → 作为新素材保存。
+    /// </summary>
+    private async Task ScanAsync()
+    {
+        using var still = await AcquireFrameAsync();
+        if (still is null)
+        {
+            Services.WinRtCameraService.Log("[VP] 扫描失败：拿不到当前帧");
+            StatusText = "扫描失败：当前没有可用画面";
+            return;
+        }
+
+        StatusText = "正在扫描…";
+
+        // 扫描算法需要 BGRA8 像素
+        using var bgra = Windows.Graphics.Imaging.SoftwareBitmap.Convert(
+            still,
+            Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8,
+            Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied);
+
+        var result = Services.DocumentScanner.Scan(bgra);
+
+        Services.WinRtCameraService.Log($"[VP] 扫描：{result.Message}");
+
+        if (!result.Found || result.Rectified is null)
+        {
+            StatusText = $"扫描：{result.Message}";
+            return;
+        }
+
+        using var rectified = result.Rectified;
+
+        // 与普通拍照走同一条保存路径（格式 / 目录 / 命名都由设置决定）
+        string path = await SaveBitmapAsync(rectified, "扫描");
+
+        StatusText = $"扫描完成：{System.IO.Path.GetFileName(path)}（已裁边校正）";
+    }
     public ICommand DeleteSnapshotCommand { get; }
     public ICommand ClearSnapshotsCommand { get; }
     public ICommand OpenFolderCommand { get; }
@@ -450,7 +495,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task CaptureAsync() => await SaveCurrentFrameAsync();
+    private async Task CaptureAsync()
+    {
+        await SaveCurrentFrameAsync();
+
+        // SaveBitmapAsync 内部已插入素材并返回路径，这里补一句状态提示
+        if (StatusText?.StartsWith("保存失败") != true && StatusText?.StartsWith("拍照失败") != true)
+        {
+            var latest = Snapshots.FirstOrDefault();
+            if (latest is not null)
+                StatusText = $"已拍摄：{Path.GetFileName(latest.FilePath)}";
+        }
+    }
 
     /// <summary>
     /// 取得要保存的一帧。
@@ -502,6 +558,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         Services.WinRtCameraService.Log($"[VP] 拍照：取得帧 {still.PixelWidth}×{still.PixelHeight}");
 
+        await SaveBitmapAsync(still, null);
+    }
+
+    /// <summary>
+    /// 把一张位图保存到素材目录（拍照与扫描共用）。
+    ///
+    /// <para>
+    /// 格式 / 质量 / 目录 / 文件名前缀都取自设置；
+    /// prefixOverride 非空时用它做本次文件名前缀（扫描件用"扫描"）。
+    /// </para>
+    /// </summary>
+    private async Task<string> SaveBitmapAsync(SoftwareBitmap bitmap, string? prefixOverride)
+    {
         try
         {
             var now = DateTime.Now;
@@ -509,9 +578,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             // ── 输出格式由设置决定（PNG 无损 / JPEG 体积小且可调质量）──
             bool jpeg = Settings.IsJpeg;
             string ext = jpeg ? ".jpg" : ".png";
-            string prefix = string.IsNullOrWhiteSpace(Settings.FileNamePrefix) ? "展台" : Settings.FileNamePrefix;
-            string fileName = $"{prefix}_{now:yyyyMMdd_HHmmss_fff}{ext}";
+            string prefix = prefixOverride
+                            ?? (string.IsNullOrWhiteSpace(Settings.FileNamePrefix) ? "展台" : Settings.FileNamePrefix);
 
+            string fileName = $"{prefix}_{now:yyyyMMdd_HHmmss_fff}{ext}";
             string folderPath = SnapshotFolder;
             string path = Path.Combine(folderPath, fileName);
 
@@ -541,11 +611,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
                 }
 
-                encoder.SetSoftwareBitmap(still);
+                encoder.SetSoftwareBitmap(bitmap);
                 await encoder.FlushAsync();
             }
 
-            Services.WinRtCameraService.Log($"[VP] 拍照成功：{fileName}");
+            Services.WinRtCameraService.Log($"[VP] 保存成功：{fileName}");
 
             // 拍照提示音（可在设置里开关）
             if (Settings.CaptureSound)
@@ -582,20 +652,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Thumbnail = new BitmapImage(new Uri(path)),
                 FilePath = path,
                 Timestamp = now,
-                PixelWidth = still.PixelWidth,
-                PixelHeight = still.PixelHeight,
+                PixelWidth = bitmap.PixelWidth,
+                PixelHeight = bitmap.PixelHeight,
                 FileSize = new FileInfo(path).Length,
             });
 
             OnPropertyChanged(nameof(SnapshotCount));
             OnPropertyChanged(nameof(SnapshotCountText));
             (ClearSnapshotsCommand as RelayCommand)?.RaiseCanExecuteChanged();
-            StatusText = $"已拍摄：{fileName}";
+
+            return path;
         }
         catch (Exception ex)
         {
             StatusText = $"保存失败：{ex.Message}";
             Debug.WriteLine($"[VP] 保存照片失败：{ex}");
+            Services.WinRtCameraService.Log($"[VP] 保存失败：{ex}");
+            return string.Empty;
         }
     }
 
