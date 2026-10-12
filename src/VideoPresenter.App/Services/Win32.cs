@@ -18,8 +18,23 @@ namespace VideoPresenter.App.Services;
 internal static class Win32
 {
     public static readonly IntPtr HWND_BROADCAST = new(0xFFFF);
-
     public const int WM_HOTKEY = 0x0312;
+
+    // ─────────────────── 窗口拖动（系统标题栏已关闭后的替代方案）───────────────────
+    //
+    // 关掉系统标题栏后就没有可拖动区域了。经典做法是：
+    //   ① 在指针按下时 ReleaseCapture（释放鼠标捕获）
+    //   ② 向窗口发送 WM_NCLBUTTONDOWN + HTCAPTION
+    // 系统收到后会当作"点在标题栏上"，自己进入拖动状态。
+    public const int WM_NCLBUTTONDOWN = 0x00A1;
+    public const int HTCAPTION = 2;
+
+    [DllImport("user32.dll", SetLastError = false)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+    public static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     // ─────────────────────────── DWM 窗口属性 ───────────────────────────
 

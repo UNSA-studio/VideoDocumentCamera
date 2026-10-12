@@ -93,6 +93,9 @@ public sealed partial class MainWindow : Window
 
         // 旋转 90°/270° 时需要重算画面尺寸（WinUI 没有 LayoutTransform）
         PreviewContainer.SizeChanged += (_, _) => UpdateRotationLayout();
+
+        // ★ 关闭系统标题栏必须在窗口显示【之前】完成，否则不生效
+        ApplyWindowChrome();
     }
 
     /// <summary>设置项变化时实时生效。</summary>
@@ -1321,22 +1324,52 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>应用窗口外观设置。</summary>
+    /// <summary>
+    /// 关闭系统标题栏（同时去掉右上角的「最小化 / 最大化 / 关闭」）。
+    ///
+    /// <para><b>⚠ 调用时机至关重要</b></para>
+    /// <para>
+    /// 这个设置必须在窗口【显示之前】生效，否则 Windows 已经把标题栏画出来了，
+    /// 再调用就看不到任何变化 —— 之前放在 OnRootLoaded 里正是这个毛病。
+    /// 现在改为构造函数中（InitializeComponent 之后）立即执行，
+    /// 并在首帧后再补一次（某些系统上需要在 AppWindow 就绪后才起作用）。
+    /// </para>
+    /// </summary>
     private void ApplyWindowChrome()
     {
         try
         {
             if (AppWindow.Presenter is not OverlappedPresenter p) return;
 
-            // 用户要求去掉系统绘制的「最小化 / 最大化 / 关闭」按钮：
-            // 这些按钮由 Windows 画在标题栏右上角，无法单独隐藏其中一个，
-            // 只能整体关闭标题栏。关闭后窗口边框仍保留（可缩放），
-            // 拖动与关闭改由界面内的标题条 / 命令栏按钮负责。
             p.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
+            Debug.WriteLine("[VP] 已关闭系统标题栏");
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[VP] 设置窗口外观失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 按住命令栏空白处拖动窗口。
+    ///
+    /// <para>
+    /// 系统标题栏关掉后就没有可拖动区域了，这里用 Win32 的经典做法补回来：
+    /// 释放捕获 + 向窗口发送"非客户区左键按下"，交给系统自己拖。
+    /// </para>
+    /// </summary>
+    private void TitleBarArea_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        try
+        {
+            if (_hwnd == IntPtr.Zero) return;
+
+            Win32.ReleaseCapture();
+            Win32.SendMessageW(_hwnd, Win32.WM_NCLBUTTONDOWN, (IntPtr)Win32.HTCAPTION, IntPtr.Zero);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VP] 拖动窗口失败：{ex.Message}");
         }
     }
 

@@ -59,7 +59,7 @@
         -->
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="48"/>    <!-- 0 标题栏（可拖拽） -->
+            <RowDefinition Height="0"/>    <!-- 0 标题栏行（已隐藏：用户要求去掉品牌区，画面直接顶到窗口上沿） -->
             <RowDefinition Height="Auto"/>  <!-- 1 命令栏 -->
             <RowDefinition Height="*"/>     <!-- 2 主体（内容区 / 顶部状态栏） -->
             <RowDefinition Height="Auto"/>  <!-- 3 状态栏（底部时） -->
@@ -91,8 +91,11 @@
             </StackPanel>
         </Grid>
 
-        <!-- ═══════════════ ② 命令栏 ═══════════════ -->
-        <Grid Grid.Row="1" Grid.ColumnSpan="3" Padding="16,0,16,12">
+        <!-- ═══════════════ ② 命令栏 ═══════════════
+             同时充当"标题栏"：因为系统标题栏已被关闭，
+             这里支持按住空白处拖动窗口。 -->
+        <Grid Grid.Row="1" Grid.ColumnSpan="3" Padding="16,0,16,12"
+              PointerPressed="TitleBarArea_PointerPressed">
             <StackPanel Orientation="Horizontal"
                         Spacing="8"
                         VerticalAlignment="Center">

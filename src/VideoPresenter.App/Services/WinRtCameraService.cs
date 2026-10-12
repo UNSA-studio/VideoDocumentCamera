@@ -278,17 +278,15 @@ internal unsafe interface IMemoryBufferByteAccess
                 return Fail("设备没有可用的视频源");
             }
 
-            // ★ 不指定输出格式：直接拿设备的【原生格式】（本机是 NV12）。
+            // ★ 必须指定 Bgra8 —— 这是被"黑屏 / 绿屏"两次教训换来的结论。
             //
-            // 为什么不再要求 Bgra8：
-            //   ① WinUI 的 SoftwareBitmapSource 本身就能显示 NV12，
-            //      显示时由 GPU 做色彩空间转换 —— 这是它最擅长的活。
-            //   ② 在 CPU 上逐帧转 BGRA 既慢（8MB/帧拷贝 + 色彩换算）又易错：
-            //      之前"画面全绿"就是手动转 YUV 时通道错位造成的。
+            // SoftwareBitmapSource 只可靠地显示 BGRA8：
+            //   · 让它吃 NV12 → 黑屏（上一版）
+            //   · 自己 CPU 转 BGRA → 转错就绿屏（上上版）
             //
-            // 结论：预览走原生格式，转换只在真正需要像素的场景（拍照 / 录像）
-            //       临时做一次，而且那时是一次性的，不影响实时帧率。
-            _frameReader = _capture.CreateFrameReaderAsync(_frameSource)
+            // 而实测转换只要 2~4ms（日志 [VP-Perf] 可见），
+            // 根本不是瓶颈 —— 之前为了"省"这几毫秒牺牲正确性，得不偿失。
+            _frameReader = _capture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8)
                                    .AsTask().GetAwaiter().GetResult();
 
             _frameReader.FrameArrived += OnFrameArrived;
@@ -415,11 +413,8 @@ internal unsafe interface IMemoryBufferByteAccess
 
             using var src = video.SoftwareBitmap;
 
-            // ★ 直接复制原生帧，【不做任何格式转换】。
-            //
-            //   显示交给 WinUI（GPU 转色彩），我们只负责把这一帧安全地留一份。
-            //   SoftwareBitmap.Copy 保留原格式与像素数据，是一次纯内存拷贝 ——
-            //   比 CPU 色彩转换便宜得多，而且绝不会出现通道错位（绿屏）。
+            // 系统已按 BGRA8 输出（见 CreateFrameReaderAsync），
+            // 这里只做一次纯内存拷贝，保证帧不会被采集线程改写。
             var converted = SoftwareBitmap.Copy(src);
 
             long t2 = Stopwatch.GetTimestamp();
