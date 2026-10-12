@@ -278,16 +278,17 @@ internal unsafe interface IMemoryBufferByteAccess
                 return Fail("设备没有可用的视频源");
             }
 
-            // ★ 必须指定 Bgra8 —— 这是被"黑屏 / 绿屏"两次教训换来的结论。
+            // ★ 自动探测可用输出格式 —— 不再"猜"。
             //
-            // SoftwareBitmapSource 只可靠地显示 BGRA8：
-            //   · 让它吃 NV12 → 黑屏（上一版）
-            //   · 自己 CPU 转 BGRA → 转错就绿屏（上上版）
-            //
-            // 而实测转换只要 2~4ms（日志 [VP-Perf] 可见），
-            // 根本不是瓶颈 —— 之前为了"省"这几毫秒牺牲正确性，得不偿失。
-            _frameReader = _capture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8)
-                                   .AsTask().GetAwaiter().GetResult();
+            // 思路（用户提出的）：程序自己枚举候选格式，逐个真实尝试，
+            // 哪个能真正创建出可用的读取器，就用哪个。
+            // 失败原因全部写进日志，一次跑完就摸清这台设备的能力。
+            _frameReader = CreateWorkingFrameReaderAsync().GetAwaiter().GetResult();
+
+            if (_frameReader is null)
+            {
+                return Fail("设备不支持任何已知的视频输出格式（详见日志）");
+            }
 
             _frameReader.FrameArrived += OnFrameArrived;
 
@@ -297,7 +298,7 @@ internal unsafe interface IMemoryBufferByteAccess
             _frameCount = 0;
             _fpsWindowStart = Environment.TickCount64;
 
-            Log("[VP-WinRT] 帧读取器已启动");
+            Log($"[VP-WinRT] 帧读取器已启动（输出格式 {_activeSubtype}）");
             StatusChanged?.Invoke(this, $"已连接：{device.Name}");
             return true;
         }
@@ -390,6 +391,63 @@ internal unsafe interface IMemoryBufferByteAccess
         if (r is null || r.Denominator == 0) return 0;
 
         return (double)r.Numerator / r.Denominator;
+    }
+
+    /// <summary>当前实际使用的输出格式（诊断用）。</summary>
+    private string _activeSubtype = "";
+
+    /// <summary>
+    /// 自动探测可用的输出格式。
+    ///
+    /// <para><b>为什么这么做</b></para>
+    /// <para>
+    /// 之前是"按经验写死一个格式"，失败就换个猜测 —— 等于把用户的机器
+    /// 当试错平台，来回折腾了好几轮（NV12 → 黑屏、手动转 → 绿屏）。
+    /// </para>
+    /// <para>
+    /// 现在改成：按【优先级顺序】逐个候选格式真实创建读取器，
+    /// 成功即采用，并把每一步的成功/失败原因写进日志。
+    /// 这样一次启动就能摸清这台设备到底支持什么。
+    /// </para>
+    ///
+    /// <para><b>候选顺序的依据</b></para>
+    /// <list type="number">
+    ///   <item>Bgra8 —— 显示层最稳（SoftwareBitmapSource 原生支持），首选</item>
+    ///   <item>Rgb32 —— 同族的 32 位格式，部分设备只支持这个</item>
+    ///   <item>Nv12  —— 现代 USB 摄像头最常见</item>
+    ///   <item>Yuy2  —— 老设备常见</item>
+    /// </list>
+    /// </summary>
+    private async Task<MediaFrameReader?> CreateWorkingFrameReaderAsync()
+    {
+        if (_frameSource is null) return null;
+
+        string[] candidates =
+        {
+            MediaEncodingSubtypes.Bgra8,
+            MediaEncodingSubtypes.Rgb32,
+            MediaEncodingSubtypes.Nv12,
+            MediaEncodingSubtypes.Yuy2,
+        };
+
+        foreach (string sub in candidates)
+        {
+            try
+            {
+                var reader = await _capture!.CreateFrameReaderAsync(_frameSource, sub);
+
+                _activeSubtype = sub;
+                Log($"[VP-WinRT] ✓ 输出格式可用：{sub}");
+                return reader;
+            }
+            catch (Exception ex)
+            {
+                // 这个格式不支持或创建失败，记录原因后继续试下一个
+                Log($"[VP-WinRT] ✗ 输出格式 {sub} 不可用：{ex.Message}");
+            }
+        }
+
+        return null;
     }
 
     private bool Fail(string message)
