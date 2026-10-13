@@ -190,7 +190,7 @@ internal unsafe interface IMemoryBufferByteAccess
             //   ConfigureAwait(false) 表示"在哪个线程完成就在哪个线程继续"，
             //   彻底避开这个问题。
             var infos = RunSync(
-                DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask().ConfigureAwait(false),
+                DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask(),
                 8000, "枚举视频设备");
 
             int index = 0;
@@ -254,9 +254,10 @@ internal unsafe interface IMemoryBufferByteAccess
                 SharingMode = MediaCaptureSharingMode.SharedReadOnly,
             };
 
-            // ⚠ ConfigureAwait(false) + RunSync 超时：不卡死，且万一卡了能报错
-            RunSync(_capture.InitializeAsync(settings).AsTask().ConfigureAwait(false),
-                    10000, "初始化摄像头");
+            // ⚠ 用 RunSync + 超时替代 GetResult()：不卡死，且万一卡了能报错
+            //   （RunSync 内部用 Task.Wait，本身不存在"回到 UI 线程"的问题，
+            //     所以这里不需要也不应该加 ConfigureAwait）
+            RunSync(_capture.InitializeAsync(settings).AsTask(), 10000, "初始化摄像头");
             Log("[VP-WinRT] MediaCapture 初始化成功");
 
             // 选一个彩色视频源（展台就是普通彩色摄像头）
@@ -292,7 +293,7 @@ internal unsafe interface IMemoryBufferByteAccess
             // 思路（用户提出的）：程序自己枚举候选格式，逐个真实尝试，
             // 哪个能真正创建出可用的读取器，就用哪个。
             // 失败原因全部写进日志，一次跑完就摸清这台设备的能力。
-            _frameReader = RunSync(CreateWorkingFrameReaderAsync().ConfigureAwait(false), 15000, "探测输出格式");
+            _frameReader = RunSync(CreateWorkingFrameReaderAsync(), 15000, "探测输出格式");
 
             if (_frameReader is null)
             {
@@ -301,7 +302,7 @@ internal unsafe interface IMemoryBufferByteAccess
 
             _frameReader.FrameArrived += OnFrameArrived;
 
-            RunSync(_frameReader.StartAsync().AsTask().ConfigureAwait(false), 10000, "启动帧读取器");
+            RunSync(_frameReader.StartAsync().AsTask(), 10000, "启动帧读取器");
 
             _running = true;
             _frameCount = 0;
