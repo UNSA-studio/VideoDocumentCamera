@@ -183,8 +183,15 @@ internal unsafe interface IMemoryBufferByteAccess
 
         try
         {
-            var infos = DeviceInformation.FindAllAsync(DeviceClass.VideoCapture)
-                                             .AsTask().GetAwaiter().GetResult();
+            // ⚠ 必须 ConfigureAwait(false)：
+            //   WinRT 的 await 默认要求回到调用它的线程（通常是 UI 线程）。
+            //   而下面用 GetAwaiter().GetResult() 阻塞了 UI 线程 ——
+            //   两边互等 → 死锁 → 界面卡死。
+            //   ConfigureAwait(false) 表示"在哪个线程完成就在哪个线程继续"，
+            //   彻底避开这个问题。
+            var infos = RunSync(
+                DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask().ConfigureAwait(false),
+                8000, "枚举视频设备");
 
             int index = 0;
             foreach (var info in infos)
@@ -247,7 +254,9 @@ internal unsafe interface IMemoryBufferByteAccess
                 SharingMode = MediaCaptureSharingMode.SharedReadOnly,
             };
 
-            _capture.InitializeAsync(settings).AsTask().GetAwaiter().GetResult();
+            // ⚠ ConfigureAwait(false) + RunSync 超时：不卡死，且万一卡了能报错
+            RunSync(_capture.InitializeAsync(settings).AsTask().ConfigureAwait(false),
+                    10000, "初始化摄像头");
             Log("[VP-WinRT] MediaCapture 初始化成功");
 
             // 选一个彩色视频源（展台就是普通彩色摄像头）
@@ -283,7 +292,7 @@ internal unsafe interface IMemoryBufferByteAccess
             // 思路（用户提出的）：程序自己枚举候选格式，逐个真实尝试，
             // 哪个能真正创建出可用的读取器，就用哪个。
             // 失败原因全部写进日志，一次跑完就摸清这台设备的能力。
-            _frameReader = CreateWorkingFrameReaderAsync().GetAwaiter().GetResult();
+            _frameReader = RunSync(CreateWorkingFrameReaderAsync().ConfigureAwait(false), 15000, "探测输出格式");
 
             if (_frameReader is null)
             {
@@ -292,7 +301,7 @@ internal unsafe interface IMemoryBufferByteAccess
 
             _frameReader.FrameArrived += OnFrameArrived;
 
-            _frameReader.StartAsync().AsTask().GetAwaiter().GetResult();
+            RunSync(_frameReader.StartAsync().AsTask().ConfigureAwait(false), 10000, "启动帧读取器");
 
             _running = true;
             _frameCount = 0;
@@ -375,7 +384,7 @@ internal unsafe interface IMemoryBufferByteAccess
             Log($"[VP-WinRT] 选择格式：{chosen.VideoFormat.Width}×{chosen.VideoFormat.Height} "
               + $"@ {FpsOf(chosen):F0}fps  {chosen.Subtype}");
 
-            _frameSource.SetFormatAsync(chosen).AsTask().GetAwaiter().GetResult();
+            _frameSource.SetFormatAsync(chosen).AsTask().ConfigureAwait(false).GetAwaiter().GetResult();
             Log("[VP-WinRT] 格式已设置");
         }
         catch (Exception ex)
@@ -434,7 +443,11 @@ internal unsafe interface IMemoryBufferByteAccess
         {
             try
             {
-                var reader = await _capture!.CreateFrameReaderAsync(_frameSource, sub);
+                // ⚠ ConfigureAwait(false)：本方法被 UI 线程用 GetResult() 同步等待，
+                //   若这里 await 要求回到 UI 线程 → 死锁。
+                var reader = await _capture!.CreateFrameReaderAsync(_frameSource, sub)
+                                           .AsTask()
+                                           .ConfigureAwait(false);
 
                 _activeSubtype = sub;
                 Log($"[VP-WinRT] ✓ 输出格式可用：{sub}");
@@ -448,6 +461,42 @@ internal unsafe interface IMemoryBufferByteAccess
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 同步等待一个 Task，带超时。
+    ///
+    /// <para><b>为什么不用 GetAwaiter().GetResult()</b></para>
+    /// <para>
+    /// GetResult() 会无限期等待 —— 一旦发生死锁（UI 线程被阻塞、
+    /// 而任务要求回到 UI 线程），界面就永久卡死，用户只能强杀进程。
+    /// 用 Wait(timeout) 后，超时会抛异常，界面能恢复并给出提示。
+    /// </para>
+    ///
+    /// <para><b>配合 ConfigureAwait(false) 双保险</b></para>
+    /// <para>
+    /// ConfigureAwait(false) 负责"不让它死锁"，这里的超时负责
+    /// "万一还是卡了，至少能报错而不是假死"。
+    /// </para>
+    /// </summary>
+    private static T RunSync<T>(Task<T> task, int timeoutMs, string what)
+    {
+        if (!task.Wait(timeoutMs))
+        {
+            Log($"[VP-WinRT] ⚠ {what} 超时（{timeoutMs} ms）");
+            throw new TimeoutException($"{what} 超时（{timeoutMs} ms）");
+        }
+
+        return task.Result;
+    }
+
+    private static void RunSync(Task task, int timeoutMs, string what)
+    {
+        if (!task.Wait(timeoutMs))
+        {
+            Log($"[VP-WinRT] ⚠ {what} 超时（{timeoutMs} ms）");
+            throw new TimeoutException($"{what} 超时（{timeoutMs} ms）");
+        }
     }
 
     private bool Fail(string message)
@@ -587,7 +636,7 @@ internal unsafe interface IMemoryBufferByteAccess
             if (_frameReader is not null)
             {
                 _frameReader.FrameArrived -= OnFrameArrived;
-                try { _frameReader.StopAsync().AsTask().GetAwaiter().GetResult(); } catch { }
+                try { _frameReader.StopAsync().AsTask().ConfigureAwait(false).GetAwaiter().GetResult(); } catch { }
                 _frameReader.Dispose();
                 _frameReader = null;
             }
