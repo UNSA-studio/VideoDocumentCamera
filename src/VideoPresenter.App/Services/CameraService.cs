@@ -22,40 +22,15 @@ public sealed record CameraDevice(int Index, string Name, string SymbolicLink)
 public interface ICameraService : IDisposable
 {
     IReadOnlyList<CameraDevice> Devices { get; }
-
-    /// <summary>
-    /// 设备枚举的诊断信息（会显示在界面上，便于用户直接反馈问题）。
-    ///
-    /// <para><b>为什么要有它</b></para>
-    /// <para>
-    /// 相机扫不到的原因很多：系统缺 Media Foundation、设备驱动异常、
-    /// 设备被别的程序占用、USB 供电不足……这些从界面上完全看不出来。
-    /// 把原始 HRESULT 与枚举到的数量摆出来，是最有效的排查手段。
-    /// </para>
-    /// </summary>
     string DiagnosticsText { get; }
-
     bool IsRunning { get; }
     double Fps { get; }
-
-    /// <summary>每来一帧触发。参数为<b>复用</b>的 SoftwareBitmap，请尽快使用，勿长期持有。</summary>
-    event EventHandler<SoftwareBitmap>? FrameArrived;
-
+    event EventHandler? FrameAvailable;
     event EventHandler<string>? StatusChanged;
-
-    void RefreshDevices();
-
-    bool Start(CameraDevice device);
-
-    void Stop();
-
-    /// <summary>取当前帧的<b>副本</b>（拍照用，调用方负责 Dispose）。</summary>
-    SoftwareBitmap? GrabStill();
-
-    /// <summary>
-    /// 取当前帧的 BGRA32 原始像素（录像用）。
-    /// <para>每次调用都会新建一个数组，调用方负责回收。</para>
-    /// </summary>
+    Task RefreshDevicesAsync(CancellationToken cancellationToken = default);
+    Task<bool> StartAsync(CameraDevice device, CancellationToken cancellationToken = default);
+    Task StopAsync(CancellationToken cancellationToken = default);
+    SoftwareBitmap? GrabStill(); // Caller owns and disposes the snapshot.
     byte[]? GrabFrameBytes();
 }
 
@@ -69,7 +44,7 @@ public interface ICameraService : IDisposable
 ///   <item><c>MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING</c> 让 MF 内建色彩转换单元完成 BGRA 输出。</item>
 /// </list>
 /// </summary>
-public sealed class MediaFoundationCameraService : ICameraService
+internal sealed class MediaFoundationCameraService
 {
     // ───────────────────────── Media Foundation 常量 ─────────────────────────
 
@@ -155,48 +130,8 @@ public sealed class MediaFoundationCameraService : ICameraService
     /// 日志文件路径（供界面提示 / 用户反馈用）。
     /// <para>%LOCALAPPDATA%\UNSA Studio\VideoDocumentCamera\logs\vdc.log</para>
     /// </summary>
-    public static string LogFilePath
-    {
-        get
-        {
-            string dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "UNSA Studio", "VideoDocumentCamera", "logs");
-            return Path.Combine(dir, "vdc.log");
-        }
-    }
-
-    /// <summary>
-    /// 同时写 Debug 输出与日志文件。
-    /// <para>
-    /// 为什么要有文件日志：相机枚举失败的原因（系统缺 Media Foundation、
-    /// 设备被占用、驱动异常……）在客户机上无法用调试器看。
-    /// 有了这个文件，用户直接把日志发回来就能定位。
-    /// </para>
-    /// </summary>
-    private static void Log(string message)
-    {
-        Debug.WriteLine(message);
-
-        try
-        {
-            string file = LogFilePath;
-
-            var fi = new FileInfo(file);
-            if (fi.Exists && fi.Length > 1024 * 1024)
-            {
-                fi.Delete();   // 只保留最近 1 MB
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-            File.AppendAllText(file,
-                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  {message}{Environment.NewLine}");
-        }
-        catch
-        {
-            // 日志失败绝不能影响主流程
-        }
-    }
+    public static string LogFilePath => AppLog.CurrentFile;
+    private static void Log(string message) => AppLog.Write(message, category: "LegacyMF");
 
     public MediaFoundationCameraService()
     {

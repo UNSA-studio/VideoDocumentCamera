@@ -88,6 +88,10 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Diagnostics regression tests
+        run: dotnet run --project tests/Diagnostics.Tests/Diagnostics.Tests.csproj -c Release
+        shell: pwsh
+
       - name: 配置 MSBuild（VS2022）
         uses: microsoft/setup-msbuild@v2
 

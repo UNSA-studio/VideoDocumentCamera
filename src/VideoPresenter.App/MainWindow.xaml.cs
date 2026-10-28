@@ -47,7 +47,12 @@ public sealed partial class MainWindow : Window
     private int _previewHeight;
 
     /// <summary>上一帧还没画完时丢弃新帧，避免 UI 线程被采集帧淹没。</summary>
-    private volatile bool _framePending;
+    private int _framePending;
+    private bool _closing;
+    private bool _closeAllowed;
+    private UiWatchdog? _watchdog;
+    private long _recordNextTick;
+    private bool _firstImageLogged;
 
     private bool _isFullScreen;
 
@@ -78,7 +83,7 @@ public sealed partial class MainWindow : Window
         Vm.PropertyChanged += OnViewModelPropertyChanged;
         Vm.FullScreenRequested += (_, on) => SetFullScreen(on);
 
-        _camera.FrameArrived += OnFrameArrived;
+        _camera.FrameAvailable += OnFrameAvailable;
 
         AppWindow.Closing += OnAppWindowClosing;
 
@@ -183,7 +188,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 解析设置里的批注颜色失败：{ex.Message}");
+            AppLog.Write($"[VP] 解析设置里的批注颜色失败：{ex}");
         }
 
         AnnotationThickness.Value = Vm.Settings.InkThickness;
@@ -199,18 +204,18 @@ public sealed partial class MainWindow : Window
             {
                 // BaseAlt：更接近资源管理器 / 设置应用的观感
                 SystemBackdrop = new MicaBackdrop { Kind = MicaKind.BaseAlt };
-                Debug.WriteLine("[VP] 已启用 Mica 材质");
+                AppLog.Write("[VP] 已启用 Mica 材质");
             }
             else if (DesktopAcrylicController.IsSupported())
             {
                 SystemBackdrop = new DesktopAcrylicBackdrop();
-                Debug.WriteLine("[VP] 已启用 Acrylic 材质（系统不支持 Mica）");
+                AppLog.Write("[VP] 已启用 Acrylic 材质（系统不支持 Mica）");
             }
         }
         catch (Exception ex)
         {
             // Win10 等环境下静默退化：界面使用系统主题的实色背景，观感依旧正确
-            Debug.WriteLine($"[VP] 系统材质不可用，退化为实色背景：{ex.Message}");
+            AppLog.Write($"[VP] 系统材质不可用，退化为实色背景：{ex}");
         }
     }
 
@@ -232,6 +237,7 @@ public sealed partial class MainWindow : Window
 
         // 设备热插拔：没设备时自动重扫，插上就能自动出现
         StartDeviceWatcher();
+        _watchdog = new UiWatchdog(DispatcherQueue);
 
         UpdateThemeIndicator();
 
@@ -341,62 +347,56 @@ public sealed partial class MainWindow : Window
 
     // ══════════════════════ 采集帧 ══════════════════════
 
-    private void OnFrameArrived(object? sender, SoftwareBitmap bitmap)
+    private void OnFrameAvailable(object? sender, EventArgs args)
     {
-        // ══ 录像：把原始像素送进录制器（只在录制时做，避免无谓的内存拷贝）══
-        if (_recorder is { IsRecording: true } && !_recordFrameBusy)
+        if (_closing) return;
+        // Recorder is fed off the capture callback at its requested cadence; bounded queue remains in RecordingService.
+        long now = Environment.TickCount64;
+        if (_recorder is { IsRecording: true } recorder && !_recordFrameBusy && now >= _recordNextTick)
         {
             _recordFrameBusy = true;
-            try
+            _recordNextTick = now + Math.Max(1, 1000 / Vm.Settings.RecordFps);
+            try { var bytes = _camera.GrabFrameBytes(); if (bytes is not null) recorder.WriteFrame(bytes); }
+            catch (Exception ex) { AppLog.Error("Feed recorder", ex); }
+            finally { _recordFrameBusy = false; }
+        }
+        // At most one bitmap submission is queued or in flight. No unbounded dispatcher backlog.
+        if (Interlocked.CompareExchange(ref _framePending, 1, 0) != 0) return;
+        SoftwareBitmap? owned = null;
+        try
+        {
+            owned = _camera.GrabStill();
+            if (owned is null) { Interlocked.Exchange(ref _framePending, 0); return; }
+            var snapshot = owned;
+            if (!DispatcherQueue.TryEnqueue(async () =>
             {
-                var bytes = _camera.GrabFrameBytes();
-                if (bytes is not null) _recorder.WriteFrame(bytes);
-            }
-            catch (Exception ex)
+                var clock = Stopwatch.StartNew();
+                try
+                {
+                    if (_closing) return;
+                    if (snapshot.BitmapPixelFormat != BitmapPixelFormat.Bgra8 || snapshot.BitmapAlphaMode != BitmapAlphaMode.Premultiplied)
+                        throw new InvalidOperationException("Display requires BGRA8/Premultiplied; received " + snapshot.BitmapPixelFormat + "/" + snapshot.BitmapAlphaMode);
+                    if (_previewSource is null) { _previewSource = new SoftwareBitmapSource(); PreviewSurface.Source = _previewSource; }
+                    await _previewSource.SetBitmapAsync(snapshot);
+                    CompareLiveImage.Source = _previewSource;
+                    if (_camera is WinRtCameraService camera) camera.ReportPresented();
+                    Vm.UpdateFrameInfo(snapshot.PixelWidth, snapshot.PixelHeight);
+                    _previewWidth = snapshot.PixelWidth; _previewHeight = snapshot.PixelHeight;
+                    if (!_firstImageLogged)
+                    {
+                        _firstImageLogged = true;
+                        AppLog.Write($"FIRST_IMAGE_SUBMITTED {snapshot.PixelWidth}x{snapshot.PixelHeight}; SetBitmapAsync={clock.Elapsed.TotalMilliseconds:F2}ms", category: "Display");
+                    }
+                }
+                catch (Exception ex) { AppLog.Error("SetBitmapAsync/Image.Source", ex); Vm.SetStatus("画面显示失败：" + ex.Message); }
+                finally { snapshot.Dispose(); Interlocked.Exchange(ref _framePending, 0); }
+            }))
             {
-                Debug.WriteLine($"[VP] 录像写帧失败：{ex.Message}");
-            }
-            finally
-            {
-                _recordFrameBusy = false;
+                snapshot.Dispose(); Interlocked.Exchange(ref _framePending, 0);
+                AppLog.Write("Dispatcher rejected preview frame", "WARN", "Display");
             }
         }
-
-        // 背压：上一帧尚未上屏则直接丢弃本帧
-        if (_framePending) return;
-        _framePending = true;
-
-        DispatcherQueue.TryEnqueue(async () =>
-        {
-            try
-            {
-                if (_previewSource is null
-                    || _previewWidth != bitmap.PixelWidth
-                    || _previewHeight != bitmap.PixelHeight)
-                {
-                    _previewSource = new SoftwareBitmapSource();
-                    _previewWidth = bitmap.PixelWidth;
-                    _previewHeight = bitmap.PixelHeight;
-                    PreviewSurface.Source = _previewSource;
-                }
-
-                // 复用同一个 SoftwareBitmap 不断上屏 —— 零额外分配
-                await _previewSource.SetBitmapAsync(bitmap);
-
-                // 对比模式下，右侧的实时画面与主画面共用同一个帧源
-                CompareLiveImage.Source = _previewSource;
-
-                Vm.UpdateFrameInfo(bitmap.PixelWidth, bitmap.PixelHeight);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[VP] 帧上屏失败：{ex.Message}");
-            }
-            finally
-            {
-                _framePending = false;
-            }
-        });
+        catch (Exception ex) { owned?.Dispose(); Interlocked.Exchange(ref _framePending, 0); AppLog.Error("Acquire preview snapshot", ex); }
     }
 
     // ── 窗口级动作 ─────────────────────────────────────────────────────
@@ -750,7 +750,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 解析批注颜色失败：{ex.Message}");
+            AppLog.Write($"[VP] 解析批注颜色失败：{ex}");
         }
     }
 
@@ -862,7 +862,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             Vm.SetStatus($"OCR 失败：{ex.Message}");
-            Debug.WriteLine($"[VP] OCR 失败：{ex}");
+            AppLog.Write($"[VP] OCR 失败：{ex}");
         }
         finally
         {
@@ -933,9 +933,7 @@ public sealed partial class MainWindow : Window
         int height = probe.PixelHeight;
         probe.Dispose();
 
-        string dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-            "视频展台", "录像");
+        string dir = AppPaths.Recordings;
         string path = Path.Combine(dir, $"录像_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
 
         _recorder ??= new RecordingService();
@@ -1342,11 +1340,11 @@ public sealed partial class MainWindow : Window
             if (AppWindow.Presenter is not OverlappedPresenter p) return;
 
             p.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
-            Debug.WriteLine("[VP] 已关闭系统标题栏");
+            AppLog.Write("[VP] 已关闭系统标题栏");
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 设置窗口外观失败：{ex.Message}");
+            AppLog.Write($"[VP] 设置窗口外观失败：{ex}");
         }
     }
 
@@ -1362,14 +1360,14 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            if (_hwnd == IntPtr.Zero) return;
-
+            if (_hwnd == IntPtr.Zero || e.OriginalSource != sender) return;
+            if (!e.GetCurrentPoint(RootGrid).Properties.IsLeftButtonPressed) return;
             Win32.ReleaseCapture();
             Win32.SendMessageW(_hwnd, Win32.WM_NCLBUTTONDOWN, (IntPtr)Win32.HTCAPTION, IntPtr.Zero);
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 拖动窗口失败：{ex.Message}");
+            AppLog.Write($"[VP] 拖动窗口失败：{ex}");
         }
     }
 
@@ -1482,7 +1480,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             // 确认框本身出错也不能卡住用户，直接退
-            Debug.WriteLine($"[VP] 退出确认框失败：{ex.Message}");
+            AppLog.Write($"[VP] 退出确认框失败：{ex}");
         }
 
         Close();
@@ -1549,7 +1547,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 恢复默认设置失败：{ex}");
+            AppLog.Write($"[VP] 恢复默认设置失败：{ex}");
         }
     }
 
@@ -1585,7 +1583,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 设置开机自启失败：{ex.Message}");
+            AppLog.Write($"[VP] 设置开机自启失败：{ex}");
             Vm.SetStatus($"设置开机自启失败：{ex.Message}");
         }
     }
@@ -1757,6 +1755,11 @@ public sealed partial class MainWindow : Window
             var folder = await picker.PickSingleFolderAsync();
             if (folder is not null)
             {
+                if (!AppPaths.IsInsideUsers(folder.Path))
+                {
+                    Vm.SetStatus("请选择应用目录 Users 内的文件夹；不会转存到 C 盘用户目录。");
+                    return;
+                }
                 Vm.Settings.PhotoFolder = folder.Path;
                 Vm.SetStatus($"素材目录已改为：{folder.Path}");
             }
@@ -1764,14 +1767,14 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             Vm.SetStatus($"选择文件夹失败：{ex.Message}");
-            Debug.WriteLine($"[VP] 选择文件夹失败：{ex}");
+            AppLog.Write($"[VP] 选择文件夹失败：{ex}");
         }
     }
 
     private void ResetPhotoFolder_Click(object sender, RoutedEventArgs e)
     {
         Vm.Settings.PhotoFolder = string.Empty;
-        Vm.SetStatus(@"素材目录已恢复为默认（图片\视频展台）");
+        Vm.SetStatus(@"素材目录已恢复为应用目录下的 Users/Media/Photos");
     }
 
     private void RecordFps_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1815,7 +1818,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 打开日志目录失败：{ex.Message}");
+            AppLog.Write($"[VP] 打开日志目录失败：{ex}");
         }
     }
 
@@ -1831,7 +1834,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 打开许可页失败：{ex.Message}");
+            AppLog.Write($"[VP] 打开许可页失败：{ex}");
         }
     }
 
@@ -1848,7 +1851,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 全屏切换失败：{ex.Message}");
+            AppLog.Write($"[VP] 全屏切换失败：{ex}");
             return;
         }
 
@@ -1874,31 +1877,36 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 窗口居中失败：{ex.Message}");
+            AppLog.Write($"[VP] 窗口居中失败：{ex}");
         }
     }
 
-    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_hwnd != IntPtr.Zero)
-        {
-            WindowApiService.UnregisterHotKey(_hwnd, WindowApiService.HotKeyCapture);
-            WindowApiService.UnregisterHotKey(_hwnd, WindowApiService.HotKeyFullScreen);
-
-            if (_subclassProc is not null)
-                Win32.RemoveWindowSubclass(_hwnd, _subclassProc, 1);
-        }
-
-        // 停止各类定时器
+        if (_closeAllowed) return;
+        args.Cancel = true;
+        if (_closing) return;
+        _closing = true;
+        _watchdog?.Dispose();
         _deviceTimer?.Stop();
-        _deviceTimer = null;
-
-        // 录制中直接关窗 → 先收尾，保证 MP4 的索引信息被写入
         _recordTimer?.Stop();
-        _recorder?.Stop();
-        _recorder?.Dispose();
-
-        _camera.FrameArrived -= OnFrameArrived;
-        Vm.Dispose();
+        _camera.FrameAvailable -= OnFrameAvailable;
+        Vm.SetStatus("正在停止设备并保存设置…");
+        try
+        {
+            await Vm.ShutdownAsync();
+            if (_recorder is not null) await Task.Run(() => _recorder.Stop());
+            _recorder?.Dispose();
+            if (_hwnd != IntPtr.Zero)
+            {
+                WindowApiService.UnregisterHotKey(_hwnd, WindowApiService.HotKeyCapture);
+                WindowApiService.UnregisterHotKey(_hwnd, WindowApiService.HotKeyFullScreen);
+                if (_subclassProc is not null) Win32.RemoveWindowSubclass(_hwnd, _subclassProc, 1);
+            }
+            Vm.Dispose();
+        }
+        catch (Exception ex) { AppLog.Error("Window shutdown cleanup", ex); }
+        finally { _closeAllowed = true; Close(); }
     }
+
 }

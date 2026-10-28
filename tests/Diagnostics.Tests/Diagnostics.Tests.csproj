@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <RuntimeIdentifier></RuntimeIdentifier><Platforms>AnyCPU</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/VideoPresenter.App/Services/AppPaths.cs" Link="AppPaths.cs"/>
+    <Compile Include="../../src/VideoPresenter.App/Services/AppLog.cs" Link="AppLog.cs"/>
+    <Compile Include="../../src/VideoPresenter.App/Services/MonthlyLogArchiver.cs" Link="MonthlyLogArchiver.cs"/>
+  </ItemGroup>
+</Project>

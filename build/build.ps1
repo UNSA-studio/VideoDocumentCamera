@@ -419,7 +419,7 @@ if ($doApp) {
             -p:PublishReadyToRun=true `
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
-            -p:DebugType=none `
+            -p:DebugType=portable `
             -p:GenerateFullPaths=true `
             -v:n `
             --nologo 2>&1

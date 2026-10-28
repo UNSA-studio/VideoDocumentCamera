@@ -72,6 +72,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private CameraDevice? _selectedDevice;
     private bool _isPreviewing;
     private bool _isRefreshing;
+    private bool _isCapturing;
+    private bool _shuttingDown;
+    private CancellationTokenSource? _switchCts;
     private bool _isRightPanelOpen = true;
     private bool _isComparing;
     private bool _isAnnotating;
@@ -99,11 +102,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         _camera.StatusChanged += OnCameraStatus;
 
-        RefreshDevicesCommand = new RelayCommand(RefreshDevices, () => !_isRefreshing);
-        TogglePreviewCommand = new RelayCommand(TogglePreview, () => SelectedDevice is not null);
-        CaptureCommand = new RelayCommand(() => _ = CaptureAsync(), () => _isPreviewing);
-        BurstCaptureCommand = new RelayCommand(() => _ = BurstCaptureAsync(), () => _isPreviewing);
-        ScanCommand = new RelayCommand(() => _ = ScanAsync(), () => _isPreviewing);
+        RefreshDevicesCommand = new RelayCommand(() => _ = ObserveAsync(RefreshDevicesAsync, "刷新设备"), () => !_isRefreshing && !_shuttingDown);
+        TogglePreviewCommand = new RelayCommand(() => _ = ObserveAsync(TogglePreviewAsync, "暂停/继续"), () => SelectedDevice is not null && !_shuttingDown);
+        CaptureCommand = new RelayCommand(() => _ = CaptureOperationAsync(CaptureAsync), () => _isPreviewing && !_isCapturing && !_shuttingDown);
+        BurstCaptureCommand = new RelayCommand(() => _ = CaptureOperationAsync(BurstCaptureAsync), () => _isPreviewing && !_isCapturing && !_shuttingDown);
+        ScanCommand = new RelayCommand(() => _ = CaptureOperationAsync(ScanAsync), () => _isPreviewing && !_isCapturing && !_shuttingDown);
         DeleteSnapshotCommand = new RelayCommand(DeleteSnapshot, () => _selectedSnapshot is not null);
         ClearSnapshotsCommand = new RelayCommand(ClearSnapshots, () => Snapshots.Count > 0);
         OpenFolderCommand = new RelayCommand(OpenSnapshotFolder);
@@ -126,7 +129,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set
         {
             if (!SetProperty(ref _selectedDevice, value)) return;
-            if (value is not null) StartPreview(value);
+            AppLog.Write("Device selection: " + (value?.Name ?? "none"), category: "UI");
+            if (value is not null && !_shuttingDown) _ = ObserveAsync(() => StartPreviewAsync(value), "切换设备");
         }
     }
 
@@ -151,6 +155,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(PreviewVisibility));
             (CaptureCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (BurstCaptureCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (ScanCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
     }
 
@@ -278,7 +283,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// 只靠界面没法判断，日志文件才是排查依据。
     /// </para>
     /// </summary>
-    public string LogFilePathText => "诊断日志：" + Services.WinRtCameraService.LogFilePath;
+    public string LogFilePathText => "诊断日志目录：" + AppPaths.Logs;
 
     /// <summary>版本信息（设置面板里展示）。</summary>
     public string VersionText => "视频展台 v1.0.0  ·  UNSA Studio";
@@ -350,7 +355,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8,
             Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied);
 
-        var result = Services.DocumentScanner.Scan(bgra);
+        var result = await Task.Run(() => Services.DocumentScanner.Scan(bgra));
 
         Services.WinRtCameraService.Log($"[VP] 扫描：{result.Message}");
 
@@ -365,7 +370,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // 与普通拍照走同一条保存路径（格式 / 目录 / 命名都由设置决定）
         string path = await SaveBitmapAsync(rectified, "扫描");
 
-        StatusText = $"扫描完成：{System.IO.Path.GetFileName(path)}（已裁边校正）";
+        if (!string.IsNullOrEmpty(path)) StatusText = $"扫描完成：{System.IO.Path.GetFileName(path)}";
     }
     public ICommand DeleteSnapshotCommand { get; }
     public ICommand ClearSnapshotsCommand { get; }
@@ -382,7 +387,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     public void Initialize()
     {
-        RefreshDevices();
+        _ = ObserveAsync(RefreshDevicesAsync, "启动扫描设备");
         OnPropertyChanged(nameof(BootInfoText));
     }
 
@@ -401,7 +406,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         else if (_camera is Services.WinRtCameraService winrt)
         {
-            FpsText = $"{_camera.Fps:F0}/{winrt.DisplayFps:F0} fps";
+            FpsText = $"采集 {_camera.Fps:F0} / 提交 {winrt.DisplayFps:F0} fps";
         }
         else
         {
@@ -409,91 +414,113 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void RefreshDevices()
+    private async Task ObserveAsync(Func<Task> action, string operation)
     {
+        try { await action(); }
+        catch (OperationCanceledException) { AppLog.Write(operation + " cancelled", category: "UI"); }
+        catch (Exception ex) { AppLog.Error(operation, ex); StatusText = operation + "失败：" + ex.Message; }
+    }
+
+    private async Task CaptureOperationAsync(Func<Task> action)
+    {
+        if (_isCapturing || _shuttingDown) return;
+        _isCapturing = true;
+        foreach (var command in new[] { CaptureCommand, BurstCaptureCommand, ScanCommand })
+            (command as RelayCommand)?.RaiseCanExecuteChanged();
+        try { await ObserveAsync(action, "拍照/扫描"); }
+        finally
+        {
+            _isCapturing = false;
+            foreach (var command in new[] { CaptureCommand, BurstCaptureCommand, ScanCommand })
+                (command as RelayCommand)?.RaiseCanExecuteChanged();
+        }
+    }
+
+    private async Task RefreshDevicesAsync()
+    {
+        if (_isRefreshing || _shuttingDown) return;
         _isRefreshing = true;
         (RefreshDevicesCommand as RelayCommand)?.RaiseCanExecuteChanged();
-
         try
         {
-            _camera.RefreshDevices();
+            await _camera.RefreshDevicesAsync();
+            if (_shuttingDown) return;
             Devices.Clear();
-            foreach (var d in _camera.Devices) Devices.Add(d);
-
-            StatusText = Devices.Count > 0
-                ? $"已发现 {Devices.Count} 个视频设备"
-                : "未发现视频设备，请检查 USB 连接与驱动";
-
-            // 只有一个设备时自动连接（可在设置里关闭）
-            if (Settings.AutoConnectSingleDevice && Devices.Count == 1 && SelectedDevice is null)
-                SelectedDevice = Devices[0];
+            foreach (var device in _camera.Devices) Devices.Add(device);
+            StatusText = _camera.DiagnosticsText;
+            if (SelectedDevice is null)
+            {
+                var remembered = Settings.RememberLastDevice
+                    ? Devices.FirstOrDefault(d => d.Name == Settings.LastDeviceName) : null;
+                if (remembered is not null) SelectedDevice = remembered;
+                else if (Settings.AutoConnectSingleDevice && Devices.Count == 1) SelectedDevice = Devices[0];
+            }
         }
         finally
         {
             _isRefreshing = false;
             (RefreshDevicesCommand as RelayCommand)?.RaiseCanExecuteChanged();
-
-            // 诊断文本是在枚举过程中生成的，刷新后要通知界面重新取值
             OnPropertyChanged(nameof(DeviceDiagnosticsText));
         }
     }
 
-    private void StartPreview(CameraDevice device)
+    private async Task StartPreviewAsync(CameraDevice device)
     {
-        if (_camera.Start(device))
+        _switchCts?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        _switchCts = cancellation;
+        IsPreviewing = false;
+        StatusText = "正在连接：" + device.Name + "（界面仍可操作）";
+        try
         {
-            IsPreviewing = true;
-            DeviceText = device.Name;
-            StatusText = $"正在预览：{device.Name}";
+            bool started = await _camera.StartAsync(device, cancellation.Token);
+            if (_switchCts != cancellation || _shuttingDown) return;
+            IsPreviewing = started;
+            DeviceText = started ? device.Name : "连接失败";
+            StatusText = _camera.DiagnosticsText;
+            OnPropertyChanged(nameof(DeviceDiagnosticsText));
+            if (started && Settings.RememberLastDevice)
+            {
+                Settings.LastDeviceName = device.Name;
+                OnPropertyChanged(nameof(LastDeviceText));
+            }
         }
-        else
+        finally
         {
-            IsPreviewing = false;
-            DeviceText = "连接失败";
+            if (_switchCts == cancellation) _switchCts = null;
+            cancellation.Dispose();
         }
     }
 
-    private void TogglePreview()
+    private async Task TogglePreviewAsync()
     {
-        if (_isPreviewing)
+        if (_isPreviewing || _switchCts is not null)
         {
-            _camera.Stop();
+            _switchCts?.Cancel();
+            await _camera.StopAsync();
             IsPreviewing = false;
             StatusText = "预览已暂停";
             FpsText = "—";
         }
-        else if (SelectedDevice is not null)
-        {
-            // 记住这次用的设备，下次可直接自动连接（可在设置里关闭）
-            if (Settings.RememberLastDevice) Settings.LastDeviceName = SelectedDevice.Name;
-
-            StartPreview(SelectedDevice);
-        }
+        else if (SelectedDevice is not null) await StartPreviewAsync(SelectedDevice);
     }
 
     private void OnCameraStatus(object? sender, string message)
-        => _dispatcher.TryEnqueue(() => StatusText = message);
+        => _dispatcher.TryEnqueue(() => { StatusText = message; OnPropertyChanged(nameof(DeviceDiagnosticsText)); });
+
+    public async Task ShutdownAsync()
+    {
+        _shuttingDown = true;
+        _switchCts?.Cancel();
+        await _camera.StopAsync();
+        IsPreviewing = false;
+        Settings.Dispose();
+    }
 
     // ───────────────────────── 拍摄 ─────────────────────────
 
     /// <summary>素材保存目录（由设置决定，留空则用默认的「图片\视频展台」）。</summary>
-    private string SnapshotFolder
-    {
-        get
-        {
-            string dir = Settings.PhotoFolder;
-
-            if (string.IsNullOrWhiteSpace(dir))
-            {
-                dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-                    "视频展台");
-            }
-
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-    }
+    private string SnapshotFolder => AppPaths.PhotoDirectory(Settings.PhotoFolder);
 
     private async Task CaptureAsync()
     {
@@ -525,7 +552,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[VP] 批注合成失败，回退到原始帧：{ex.Message}");
+                AppLog.Write($"[VP] 批注合成失败，回退到原始帧：{ex}");
             }
         }
 
@@ -582,7 +609,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                             ?? (string.IsNullOrWhiteSpace(Settings.FileNamePrefix) ? "展台" : Settings.FileNamePrefix);
 
             string fileName = $"{prefix}_{now:yyyyMMdd_HHmmss_fff}{ext}";
-            string folderPath = SnapshotFolder;
+            string folderPath = prefixOverride == "扫描" ? AppPaths.Scans : SnapshotFolder;
             string path = Path.Combine(folderPath, fileName);
 
             Services.WinRtCameraService.Log($"[VP] 保存目标：{path}");
@@ -602,7 +629,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 {
                     var props = new BitmapPropertySet
                     {
-                        ["ImageQuality"] = new BitmapTypedValue(Settings.JpegQuality / 100f, Windows.Foundation.PropertyType.Single),
+                        ["ImageQuality"] = new BitmapTypedValue((float)(Settings.JpegQuality / 100.0), Windows.Foundation.PropertyType.Single),
                     };
                     encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, stream, props);
                 }
@@ -621,14 +648,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (Settings.CaptureSound)
             {
                 try { Services.AppSounds.Capture(); }
-                catch (Exception ex) { Debug.WriteLine($"[VP] 提示音失败：{ex.Message}"); }
+                catch (Exception ex) { AppLog.Write($"[VP] 提示音失败：{ex}"); }
             }
 
             // 拍完自动打开文件夹
             if (Settings.OpenFolderAfterCapture)
             {
                 try { Process.Start("explorer.exe", SnapshotFolder); }
-                catch (Exception ex) { Debug.WriteLine($"[VP] 打开文件夹失败：{ex.Message}"); }
+                catch (Exception ex) { AppLog.Write($"[VP] 打开文件夹失败：{ex}"); }
             }
 
             // 可选：把文件放进剪贴板，方便直接粘进课件
@@ -643,7 +670,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[VP] 复制到剪贴板失败：{ex.Message}");
+                    AppLog.Write($"[VP] 复制到剪贴板失败：{ex}");
                 }
             }
 
@@ -666,7 +693,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             StatusText = $"保存失败：{ex.Message}";
-            Debug.WriteLine($"[VP] 保存照片失败：{ex}");
+            AppLog.Write($"[VP] 保存照片失败：{ex}");
             Services.WinRtCameraService.Log($"[VP] 保存失败：{ex}");
             return string.Empty;
         }
@@ -683,7 +710,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 删除文件失败：{ex.Message}");
+            AppLog.Write($"[VP] 删除文件失败：{ex}");
         }
 
         Snapshots.Remove(_selectedSnapshot);
@@ -726,7 +753,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 打开文件夹失败：{ex.Message}");
+            AppLog.Write($"[VP] 打开文件夹失败：{ex}");
         }
     }
 

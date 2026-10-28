@@ -1,738 +1,338 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (C) 2026 UNSA Studio
-//
-// 本文件属于视频展台（VideoPresenter）。分发时请随文件一并提供许可条款：
-// https://polyformproject.org/licenses/noncommercial/1.0.0
-//
-// ============================================================================
-//  WinRtCameraService.cs —— 基于 WinRT MediaCapture 的采集实现
-//
-//  为什么放弃 Media Foundation？
-//  ---------------------------------------------------------------------------
-//  本项目最初用 MF（MFEnumDeviceSources + IMFSourceReader）实现采集，
-//  在真机上连续踩了四个 COM interop 的坑：
-//
-//    ① SetGUID 通过 [ComImport] 接口调用不生效 → MFEnumDeviceSources 返回
-//       E_INVALIDARG（0x80070057），表现为"一个设备都扫不到"；
-//    ② SetString 的 vtable 索引多写 1 → 调到 SetBlob → 访问冲突闪退；
-//    ③ SetGUID/SetUINT64 写 MediaType 同样不生效 → 格式协商静默失败 →
-//       尺寸猜错 → 预览全黑；
-//    ④ IMFSourceReader 虽然 IID 正确（且与官方 mfreadwrite.idl 一致），
-//       但它是 IDL 里的 `local` 接口，.NET 的 RCW 在 ReadSample() 首次
-//       真正调用时 QueryInterface 失败：E_NOINTERFACE (0x80004002)。
-//
-//  归根结底：手写 COM 接口 + 手算 vtable 索引在 .NET 上太脆弱。
-//  WinRT 的 MediaCapture 是投影 API（由 CsWinRT 生成，无需手写 IID），
-//  且是微软在 WinUI 3 上推荐的采集方案，因此改为本实现。
-// ============================================================================
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Threading;
+using Microsoft.UI.Dispatching;
 using Windows.Devices.Enumeration;
 using Windows.Graphics.Imaging;
 using Windows.Media.Capture;
 using Windows.Media.Capture.Frames;
-using Windows.Media.Core;
 using Windows.Media.MediaProperties;
 
 namespace VideoPresenter.App.Services;
 
+[ComImport, Guid("5B0D3235-4DBA-4D44-865E-8F1D0E4FD04D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal unsafe interface IMemoryBufferByteAccess { void GetBuffer(out byte* buffer, out uint capacity); }
+
 /// <summary>
-/// WinRT 缓冲的原始指针访问接口（写 / 读 SoftwareBitmap 像素用）。
-///
-/// <para>
-/// 放在命名空间级而不是某个类内部：采集服务（WinRt 与 MF 两套实现）
-/// 都需要它，嵌在类里会导致另一处无法引用。
-/// </para>
+/// UI/STA-initiated, genuinely asynchronous camera lifecycle. No Wait/Result/GetResult.
+/// Each snapshot has one owner. FrameAvailable is only a signal, never a borrowed bitmap.
+/// References: Microsoft Learn, MediaCapture.InitializeAsync; Process media frames with MediaFrameReader.
 /// </summary>
-[ComImport]
-[Guid("5B0D3235-4DBA-4D44-865E-8F1D0E4FD04D")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal unsafe interface IMemoryBufferByteAccess
+public sealed class WinRtCameraService : ICameraService
 {
-    void GetBuffer(out byte* buffer, out uint capacity);
-}
-
-/// <summary>
-    /// 基于 WinRT <see cref="MediaCapture"/> 的采集实现。
-    /// </summary>
-    public sealed class WinRtCameraService : ICameraService
-    {
-        public WinRtCameraService()
-        {
-            // 采集回调在后台线程，帧通知必须经 DispatcherQueue 投递到 UI 线程
-            _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-        }
-
+    private readonly DispatcherQueue _ui = DispatcherQueue.GetForCurrentThread()
+        ?? throw new InvalidOperationException("Camera service must be created on the UI thread.");
+    private readonly SemaphoreSlim _lifecycle = new(1, 1);
+    private readonly object _frameGate = new();
     private readonly List<CameraDevice> _devices = new();
-    private readonly List<string> _deviceIds = new();   // 与 _devices 一一对应
-
     private MediaCapture? _capture;
-    private MediaFrameReader? _frameReader;
-    private MediaFrameSource? _frameSource;
-
-    /// <summary>最近一帧（复用的位图，供界面显示）。</summary>
+    private MediaFrameReader? _reader;
     private SoftwareBitmap? _latest;
-
-    /// <summary>帧格式只打印一次，避免日志刷屏。</summary>
-    private bool _logFormatOnce = true;
-
-    // ── 性能计时（每秒汇总一次，帮助定位瓶颈）──
-    private long _perfWindowStart = Environment.TickCount64;
-    private long _perfFrames;
-    private long _perfAcquireTicks;
-    private long _perfConvertTicks;
-
-    /// <summary>
-    /// 上一帧。
-    /// <para>
-    /// 用于"延迟一帧释放"：界面显示与 GrabStill()（拍照）都可能仍在引用
-    /// _latest，所以不能在新帧到来时立刻 Dispose 它 —— 那会让拍照
-    /// 拿到已释放的对象、静默失败。
-    /// </para>
-    /// </summary>
-    private SoftwareBitmap? _previous;
-
-    private long _frameCount;
-    private long _fpsWindowStart;
-    private double _fps;
-
-    private long _displayFrames;
-    private long _displayWindowStart;
-    private double _displayFps;
-
-    /// <summary>UI 线程派发器（帧通知必须投递到 UI 线程）。</summary>
-    private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
-
+    private TaskCompletionSource<bool>? _firstFrame;
     private volatile bool _running;
-
+    private bool _disposed;
+    private int _callbackBusy;
+    private long _received, _dropped, _windowStart, _lastFrame, _presented, _presentStart;
+    private double _fps, _displayFps;
+    private bool _formatLogged;
+    private int _deferredInitializations;
     public IReadOnlyList<CameraDevice> Devices => _devices;
     public bool IsRunning => _running;
-    /// <summary>接口帧率：对外暴露的是【采集帧率】（设备给帧速度）。</summary>
-    public double Fps => _fps;
-
-    /// <summary>界面显示帧率（渲染到屏幕的速度，远程桌面下会明显偏低）。</summary>
-    public double DisplayFps => _displayFps;
-
-    public event EventHandler<SoftwareBitmap>? FrameArrived;
+    public double Fps => Volatile.Read(ref _fps);
+    // This measures successful SetBitmapAsync completions, NOT monitor/remote-client presentation.
+    public double DisplayFps => Volatile.Read(ref _displayFps);
+    public string DiagnosticsText { get; private set; } = "尚未扫描设备";
+    public event EventHandler? FrameAvailable;
     public event EventHandler<string>? StatusChanged;
+    public static string LogFilePath => AppLog.CurrentFile;
+    internal static void Log(string text) => AppLog.Write(text, category: "Camera");
 
-    // ───────────────────────── 诊断 ─────────────────────────
-
-    private string _diagnostics = "尚未扫描设备";
-    public string DiagnosticsText => _diagnostics;
-
-    /// <summary>日志文件路径（与 MF 实现保持一致，界面直接显示它）。</summary>
-    public static string LogFilePath
+    private void RequireUI()
     {
-        get
-        {
-            string dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "UNSA Studio", "VideoDocumentCamera", "logs");
-            return Path.Combine(dir, "vdc.log");
-        }
+        if (!_ui.HasThreadAccess) throw new InvalidOperationException("Camera lifecycle must run on the UI/STA thread.");
     }
 
-    private static readonly object LogGate = new();
-
-    /// <summary>
-    /// 写一行诊断日志。
-    /// <para>internal 而非 private：View / ViewModel 也要用它记录拍照等失败原因 ——
-    /// 那些地方原先用 Debug.WriteLine，用户在日志里根本看不到。</para>
-    /// </summary>
-    internal static void Log(string message)
+    public async Task RefreshDevicesAsync(CancellationToken cancellationToken = default)
     {
+        RequireUI();
+        Log("Enumerate BEGIN");
         try
         {
-            string path = LogFilePath;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-            // 超过 1 MB 就截断，避免无限增长
-            if (File.Exists(path) && new FileInfo(path).Length > 1024 * 1024)
-                File.Delete(path);
-
-            string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}";
-            lock (LogGate) File.AppendAllText(path, line + Environment.NewLine);
-            Debug.WriteLine(line);
-        }
-        catch
-        {
-            // 日志失败绝不能影响主流程
-        }
-    }
-
-    // ───────────────────────── 枚举 ─────────────────────────
-
-    /// <summary>
-    /// 枚举视频采集设备。
-    ///
-    /// <para><b>为什么用同步阻塞</b></para>
-    /// <para>
-    /// DeviceInformation.FindAllAsync 是异步 API，而 ICameraService 是同步接口。
-    /// 这里用 GetAwaiter().GetResult() 阻塞 —— 调用方在 UI 线程且不在
-    /// 同步上下文中，不会造成死锁（MS 文档对 WinRT 异步 API 的显式说明）。
-    /// </para>
-    /// </summary>
-    public void RefreshDevices()
-    {
-        _devices.Clear();
-        _deviceIds.Clear();
-
-        try
-        {
-            // ⚠ 必须 ConfigureAwait(false)：
-            //   WinRT 的 await 默认要求回到调用它的线程（通常是 UI 线程）。
-            //   而下面用 GetAwaiter().GetResult() 阻塞了 UI 线程 ——
-            //   两边互等 → 死锁 → 界面卡死。
-            //   ConfigureAwait(false) 表示"在哪个线程完成就在哪个线程继续"，
-            //   彻底避开这个问题。
-            var infos = RunSync(
-                DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask(),
-                8000, "枚举视频设备");
-
+            var infos = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            _devices.Clear();
             int index = 0;
             foreach (var info in infos)
             {
-                string name = string.IsNullOrWhiteSpace(info.Name) ? $"视频设备 {index + 1}" : info.Name;
-
-                // 只保留真正可用于视频采集的设备（排除音频等）
-                _devices.Add(new CameraDevice(index, name, info.Id));
-                _deviceIds.Add(info.Id);
-
-                Log($"[VP-WinRT] 设备 {index}：\"{name}\"  id={info.Id}");
-                index++;
+                _devices.Add(new CameraDevice(index++, info.Name, info.Id));
+                Log($"Device name={info.Name}; id={info.Id}");
             }
-
-            Log($"[VP-WinRT] 设备枚举完成，共 {_devices.Count} 个");
-            _diagnostics = _devices.Count > 0
-                ? $"✓ WinRT 枚举到 {_devices.Count} 个视频设备"
-                : "✗ WinRT 未枚举到任何视频设备\n" +
-                  "   请检查：USB 连接 / 是否需要厂商驱动 / 是否被其它程序占用\n" +
-                  "   可在「设备管理器 → 照相机」确认设备是否存在";
+            DiagnosticsText = $"已发现 {_devices.Count} 个视频设备；尚未验证出帧与显示";
+            StatusChanged?.Invoke(this, DiagnosticsText);
+            Log($"Enumerate END count={_devices.Count}");
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Log($"[VP-WinRT] 设备枚举失败：{ex}");
-            _diagnostics = $"✗ 设备枚举失败：{ex.Message}";
+            AppLog.Error("Enumerate video devices", ex);
+            DiagnosticsText = $"扫描失败：{ex.Message} (0x{ex.HResult:X8})";
+            StatusChanged?.Invoke(this, DiagnosticsText);
         }
-
-        StatusChanged?.Invoke(this, _devices.Count > 0
-            ? $"已发现 {_devices.Count} 个视频设备"
-            : "未发现视频设备");
     }
 
-    // ───────────────────────── 打开 / 关闭 ─────────────────────────
-
-    public bool Start(CameraDevice device)
+    public async Task<bool> StartAsync(CameraDevice device, CancellationToken cancellationToken = default)
     {
-        Stop();
-
+        RequireUI();
+        await _lifecycle.WaitAsync(cancellationToken);
+        var clock = Stopwatch.StartNew();
         try
         {
-            if (device.Index < 0 || device.Index >= _deviceIds.Count)
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_deferredInitializations > 0)
+                throw new InvalidOperationException("上一次驱动初始化仍未返回；请稍后重试或重新插拔设备。");
+            await StopCoreAsync();
+            Log($"Connect BEGIN name={device.Name}; id={device.SymbolicLink}; apartment={Thread.CurrentThread.GetApartmentState()}");
+            Exception? initializationFailure = null;
+            foreach (var sharing in new[] { MediaCaptureSharingMode.ExclusiveControl, MediaCaptureSharingMode.SharedReadOnly })
             {
-                return Fail($"设备索引无效（{device.Index}）");
+                cancellationToken.ThrowIfCancellationRequested();
+                var capture = new MediaCapture();
+                var settings = new MediaCaptureInitializationSettings
+                {
+                    VideoDeviceId = device.SymbolicLink,
+                    StreamingCaptureMode = StreamingCaptureMode.Video,
+                    MemoryPreference = MediaCaptureMemoryPreference.Cpu,
+                    SharingMode = sharing,
+                };
+                Task initialize;
+                try { initialize = capture.InitializeAsync(settings).AsTask(); }
+                catch { capture.Dispose(); throw; }
+                try
+                {
+                    Log($"Initialize BEGIN sharing={sharing}");
+                    await initialize.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+                    _capture = capture;
+                    _capture.Failed += CaptureFailed;
+                    Log($"Initialize END sharing={sharing}; elapsed={clock.ElapsedMilliseconds}ms");
+                }
+                catch (Exception ex)
+                {
+                    initializationFailure = ex;
+                    // WaitAsync timeout/cancellation does not stop native initialization. Do NOT dispose it mid-call.
+                    if (!initialize.IsCompleted)
+                    {
+                        _deferredInitializations++;
+                        _ = initialize.ContinueWith(t =>
+                        {
+                            _ = t.Exception;
+                            _ui.TryEnqueue(() => { capture.Dispose(); _deferredInitializations--; Log("Deferred initialization finished; resource released."); });
+                        }, TaskScheduler.Default);
+                        throw;
+                    }
+                    capture.Dispose();
+                    AppLog.Error("Initialize sharing=" + sharing, ex);
+                    if (ex is OperationCanceledException || sharing == MediaCaptureSharingMode.SharedReadOnly) throw;
+                    continue;
+                }
+                var source = _capture.FrameSources.Values
+                    .Where(s => s.Info.SourceKind == MediaFrameSourceKind.Color)
+                    .OrderByDescending(s => s.Info.MediaStreamType == MediaStreamType.VideoPreview)
+                    .FirstOrDefault() ?? throw new InvalidOperationException("设备未提供彩色视频流。");
+                Log($"Source id={source.Info.Id}; kind={source.Info.SourceKind}; stream={source.Info.MediaStreamType}");
+                foreach (var format in source.SupportedFormats)
+                    Log($"Supported {format.VideoFormat?.Width}x{format.VideoFormat?.Height} @{Rate(format):F2} {format.Subtype}");
+                if (sharing == MediaCaptureSharingMode.ExclusiveControl)
+                {
+                    var chosen = source.SupportedFormats.Where(f => f.VideoFormat is not null &&
+                        (long)f.VideoFormat.Width * f.VideoFormat.Height <= 1920L * 1080 && Rate(f) <= 60)
+                        .OrderByDescending(f => Rate(f) >= 25)
+                        .ThenByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
+                        .ThenByDescending(Rate).FirstOrDefault();
+                    if (chosen is not null)
+                    {
+                        try
+                        {
+                            await source.SetFormatAsync(chosen).AsTask().WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
+                            Log($"Selected {chosen.VideoFormat.Width}x{chosen.VideoFormat.Height} @{Rate(chosen):F2} {chosen.Subtype}");
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex) { AppLog.Error("Set source format; inspect actual current format below", ex); }
+                    }
+                }
+                else Log("SharedReadOnly: SetFormatAsync intentionally skipped; the controller owns source format.");
+                var current = source.CurrentFormat;
+                Log($"Actual input {current.VideoFormat.Width}x{current.VideoFormat.Height} @{Rate(current):F2} {current.Subtype}");
+                double scale = Math.Min(1.0, Math.Min(1920.0 / current.VideoFormat.Width, 1080.0 / current.VideoFormat.Height));
+                var size = new BitmapSize { Width = Math.Max(2u, (uint)(current.VideoFormat.Width * scale) / 2 * 2),
+                    Height = Math.Max(2u, (uint)(current.VideoFormat.Height * scale) / 2 * 2) };
+                // SoftwareBitmapSource requires BGRA8 + premultiplied alpha. NV12 is NOT directly displayable by it.
+                foreach (string subtype in new[] { MediaEncodingSubtypes.Bgra8, current.Subtype }.Distinct())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    try
+                    {
+                        Log($"Probe BEGIN subtype={subtype}; output={size.Width}x{size.Height}");
+                        _reader = await _capture.CreateFrameReaderAsync(source, subtype, size).AsTask()
+                            .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                        _reader.AcquisitionMode = MediaFrameReaderAcquisitionMode.Realtime;
+                        _reader.FrameArrived += OnFrameArrived;
+                        _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        _formatLogged = false;
+                        _received = _dropped = _presented = 0;
+                        _windowStart = _presentStart = Environment.TickCount64;
+                        var result = await _reader.StartAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                        Log($"Reader Start status={result}");
+                        if (result != MediaFrameReaderStartStatus.Success)
+                            throw new InvalidOperationException("帧读取器启动失败：" + result);
+                        await _firstFrame.Task.WaitAsync(TimeSpan.FromSeconds(6), cancellationToken);
+                        _running = true;
+                        DiagnosticsText = $"已收到可显示帧：{device.Name}；输出 BGRA8/Premultiplied";
+                        StatusChanged?.Invoke(this, DiagnosticsText);
+                        Log($"Connect END first usable frame verified; elapsed={clock.ElapsedMilliseconds}ms");
+                        return true;
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) { AppLog.Error("Probe subtype=" + subtype, ex); await StopReaderAsync(); }
+                }
+                break; // Initialized but no usable frames: report the actual failure instead of blaming occupancy.
             }
-
-            string deviceId = _deviceIds[device.Index];
-            Log($"[VP-WinRT] 正在打开设备：{device.Name}");
-
-            _capture = new MediaCapture();
-
-            var settings = new MediaCaptureInitializationSettings
-            {
-                VideoDeviceId = deviceId,
-                StreamingCaptureMode = StreamingCaptureMode.Video,
-
-                // CPU 内存：这样 SoftwareBitmap 可以直接读像素
-                MemoryPreference = MediaCaptureMemoryPreference.Cpu,
-
-                // 共享只读：允许多个程序同时用（希沃展台可能也在开着的）
-                SharingMode = MediaCaptureSharingMode.SharedReadOnly,
-            };
-
-            // ⚠ 用 RunSync + 超时替代 GetResult()：不卡死，且万一卡了能报错
-            //   （RunSync 内部用 Task.Wait，本身不存在"回到 UI 线程"的问题，
-            //     所以这里不需要也不应该加 ConfigureAwait）
-            RunSync(_capture.InitializeAsync(settings).AsTask(), 10000, "初始化摄像头");
-            Log("[VP-WinRT] MediaCapture 初始化成功");
-
-            // 选一个彩色视频源（展台就是普通彩色摄像头）
-            _frameSource = _capture.FrameSources.Values
-                .FirstOrDefault(s => s.Info?.SourceKind == MediaFrameSourceKind.Color)
-                ?? _capture.FrameSources.Values.FirstOrDefault();
-
-            if (_frameSource is null)
-            {
-                return Fail("设备没有可用的视频源");
-            }
-
-            Log($"[VP-WinRT] 视频源：{_frameSource.Info?.DeviceInformation?.Name}");
-
-            // ── 选择设备支持的【最优格式】 ──
-            //
-            // ⚠ 不要用 CreateFrameReaderAsync(source, Bgra8) 直接要 BGRA8：
-            //   那等于强制系统走"实时格式转换"管道，很多展台在转换时
-            //   只能跑 10fps 左右（实测希沃展台就是这样）。
-            //
-            //   正确做法：先看设备原生支持哪些格式，挑一个分辨率/帧率最高的，
-            //   用 SetFormatAsync 设上去，再创建 reader（不指定输出格式，
-            //   即使用源的原生格式），最后由我们自己转成 BGRA8。
-            SelectBestFormat();
-
-            if (_frameSource is null)
-            {
-                return Fail("设备没有可用的视频源");
-            }
-
-            // ★ 自动探测可用输出格式 —— 不再"猜"。
-            //
-            // 思路（用户提出的）：程序自己枚举候选格式，逐个真实尝试，
-            // 哪个能真正创建出可用的读取器，就用哪个。
-            // 失败原因全部写进日志，一次跑完就摸清这台设备的能力。
-            _frameReader = RunSync(CreateWorkingFrameReaderAsync(), 15000, "探测输出格式");
-
-            if (_frameReader is null)
-            {
-                return Fail("设备不支持任何已知的视频输出格式（详见日志）");
-            }
-
-            _frameReader.FrameArrived += OnFrameArrived;
-
-            RunSync(_frameReader.StartAsync().AsTask(), 10000, "启动帧读取器");
-
-            _running = true;
-            _frameCount = 0;
-            _fpsWindowStart = Environment.TickCount64;
-
-            Log($"[VP-WinRT] 帧读取器已启动（输出格式 {_activeSubtype}）");
-            StatusChanged?.Invoke(this, $"已连接：{device.Name}");
-            return true;
+            throw new InvalidOperationException("没有收到可用视频帧；请查看日期日志中的 Probe/Frame 异常。", initializationFailure);
         }
+        catch (OperationCanceledException) { Log("Connect CANCELLED"); await StopCoreAsync(); return false; }
         catch (Exception ex)
         {
-            Log($"[VP-WinRT] 打开设备失败：{ex}");
-            return Fail(ex.Message);
+            AppLog.Error("Connect FAILED elapsed=" + clock.ElapsedMilliseconds + "ms", ex);
+            DiagnosticsText = $"连接失败：{ex.Message} (0x{ex.HResult:X8})";
+            await StopCoreAsync();
+            StatusChanged?.Invoke(this, DiagnosticsText);
+            return false;
         }
+        finally { _lifecycle.Release(); }
     }
 
-    /// <summary>
-    /// 在设备支持的格式里挑一个适合【实时预览】的。
-    ///
-    /// <para><b>⚠ 关键约束：必须限制分辨率上限</b></para>
-    /// <para>
-    /// 展台设备通常同时暴露"拍照模式"和"视频模式"的格式，
-    /// 前者可能高达 3264×2448（800 万像素）—— 那个分辨率跑 30fps，
-    /// 每帧 BGRA 就要 32 MB，光内存带宽就接近 1 GB/s，
-    /// 再加上逐帧格式转换，会把整机拖到卡死。
-    /// 所以这里硬性限制：预览分辨率不超过 1920×1080。
-    /// </para>
-    /// </summary>
-    private void SelectBestFormat()
+    private void CaptureFailed(MediaCapture sender, MediaCaptureFailedEventArgs args)
     {
-        if (_frameSource is null) return;
-
-        // 预览分辨率上限：超过这个值的格式一律不考虑
-        const long MaxPreviewPixels = 1920L * 1080L;
-
-        try
-        {
-            var formats = _frameSource.SupportedFormats;
-            if (formats is null || formats.Count == 0)
-            {
-                Log("[VP-WinRT] 设备未报告支持的格式，沿用默认");
-                return;
-            }
-
-            foreach (var f in formats)
-            {
-                var v = f.VideoFormat;
-                Log($"[VP-WinRT]   支持格式：{v?.Width}×{v?.Height} @ {FpsOf(f):F0}fps  {f.Subtype}");
-            }
-
-            // ① 先筛"分辨率不超过 1080p 且帧率不小于 20"的候选
-            var candidates = formats
-                .Where(f => f.VideoFormat is not null
-                            && (long)f.VideoFormat.Width * f.VideoFormat.Height <= MaxPreviewPixels
-                            && FpsOf(f) >= 20)
-                .ToList();
-
-            // ② 候选里取分辨率最高的（最清晰），同分辨率取帧率最高的
-            var chosen = candidates
-                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                .ThenByDescending(FpsOf)
-                .FirstOrDefault();
-
-            // ③ 没有达标帧率的 → 退让：允许任意帧率，但仍限制在 1080p 以内
-            chosen ??= formats
-                .Where(f => f.VideoFormat is not null
-                            && (long)f.VideoFormat.Width * f.VideoFormat.Height <= MaxPreviewPixels)
-                .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                .ThenByDescending(FpsOf)
-                .FirstOrDefault();
-
-            // ④ 实在没有 1080p 以内的 → 取所有格式里最"省"的那个（像素最少）
-            chosen ??= formats
-                .Where(f => f.VideoFormat is not null)
-                .OrderBy(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                .FirstOrDefault();
-
-            if (chosen is null) return;
-
-            Log($"[VP-WinRT] 选择格式：{chosen.VideoFormat.Width}×{chosen.VideoFormat.Height} "
-              + $"@ {FpsOf(chosen):F0}fps  {chosen.Subtype}");
-
-            _frameSource.SetFormatAsync(chosen).AsTask().ConfigureAwait(false).GetAwaiter().GetResult();
-            Log("[VP-WinRT] 格式已设置");
-        }
-        catch (Exception ex)
-        {
-            Log($"[VP-WinRT] 选择格式失败（沿用默认）：{ex.Message}");
-        }
-    }
-
-    /// <summary>把 MediaRatio 形式的帧率转成数字（不能与属性 Fps 重名）。</summary>
-    private static double FpsOf(MediaFrameFormat format)
-    {
-        var r = format.FrameRate;
-        if (r is null || r.Denominator == 0) return 0;
-
-        return (double)r.Numerator / r.Denominator;
-    }
-
-    /// <summary>当前实际使用的输出格式（诊断用）。</summary>
-    private string _activeSubtype = "";
-
-    /// <summary>
-    /// 自动探测可用的输出格式。
-    ///
-    /// <para><b>为什么这么做</b></para>
-    /// <para>
-    /// 之前是"按经验写死一个格式"，失败就换个猜测 —— 等于把用户的机器
-    /// 当试错平台，来回折腾了好几轮（NV12 → 黑屏、手动转 → 绿屏）。
-    /// </para>
-    /// <para>
-    /// 现在改成：按【优先级顺序】逐个候选格式真实创建读取器，
-    /// 成功即采用，并把每一步的成功/失败原因写进日志。
-    /// 这样一次启动就能摸清这台设备到底支持什么。
-    /// </para>
-    ///
-    /// <para><b>候选顺序的依据</b></para>
-    /// <list type="number">
-    ///   <item>Bgra8 —— 显示层最稳（SoftwareBitmapSource 原生支持），首选</item>
-    ///   <item>Rgb32 —— 同族的 32 位格式，部分设备只支持这个</item>
-    ///   <item>Nv12  —— 现代 USB 摄像头最常见</item>
-    ///   <item>Yuy2  —— 老设备常见</item>
-    /// </list>
-    /// </summary>
-    private async Task<MediaFrameReader?> CreateWorkingFrameReaderAsync()
-    {
-        if (_frameSource is null) return null;
-
-        string[] candidates =
-        {
-            MediaEncodingSubtypes.Bgra8,
-            MediaEncodingSubtypes.Rgb32,
-            MediaEncodingSubtypes.Nv12,
-            MediaEncodingSubtypes.Yuy2,
-        };
-
-        foreach (string sub in candidates)
-        {
-            try
-            {
-                // ⚠ ConfigureAwait(false)：本方法被 UI 线程用 GetResult() 同步等待，
-                //   若这里 await 要求回到 UI 线程 → 死锁。
-                var reader = await _capture!.CreateFrameReaderAsync(_frameSource, sub)
-                                           .AsTask()
-                                           .ConfigureAwait(false);
-
-                _activeSubtype = sub;
-                Log($"[VP-WinRT] ✓ 输出格式可用：{sub}");
-                return reader;
-            }
-            catch (Exception ex)
-            {
-                // 这个格式不支持或创建失败，记录原因后继续试下一个
-                Log($"[VP-WinRT] ✗ 输出格式 {sub} 不可用：{ex.Message}");
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// 同步等待一个 Task，带超时。
-    ///
-    /// <para><b>为什么不用 GetAwaiter().GetResult()</b></para>
-    /// <para>
-    /// GetResult() 会无限期等待 —— 一旦发生死锁（UI 线程被阻塞、
-    /// 而任务要求回到 UI 线程），界面就永久卡死，用户只能强杀进程。
-    /// 用 Wait(timeout) 后，超时会抛异常，界面能恢复并给出提示。
-    /// </para>
-    ///
-    /// <para><b>配合 ConfigureAwait(false) 双保险</b></para>
-    /// <para>
-    /// ConfigureAwait(false) 负责"不让它死锁"，这里的超时负责
-    /// "万一还是卡了，至少能报错而不是假死"。
-    /// </para>
-    /// </summary>
-    private static T RunSync<T>(Task<T> task, int timeoutMs, string what)
-    {
-        if (!task.Wait(timeoutMs))
-        {
-            Log($"[VP-WinRT] ⚠ {what} 超时（{timeoutMs} ms）");
-            throw new TimeoutException($"{what} 超时（{timeoutMs} ms）");
-        }
-
-        return task.Result;
-    }
-
-    private static void RunSync(Task task, int timeoutMs, string what)
-    {
-        if (!task.Wait(timeoutMs))
-        {
-            Log($"[VP-WinRT] ⚠ {what} 超时（{timeoutMs} ms）");
-            throw new TimeoutException($"{what} 超时（{timeoutMs} ms）");
-        }
-    }
-
-    private bool Fail(string message)
-    {
-        Log($"[VP-WinRT] 启动失败：{message}");
-        StatusChanged?.Invoke(this, $"连接失败：{message}");
-        try { Stop(); } catch { /* 忽略 */ }
-        return false;
+        _running = false;
+        Log($"Capture FAILED code=0x{args.Code:X8}; message={args.Message}");
+        DiagnosticsText = $"采集失败：{args.Message} (0x{args.Code:X8})";
+        _firstFrame?.TrySetException(new InvalidOperationException(DiagnosticsText));
+        StatusChanged?.Invoke(this, DiagnosticsText);
     }
 
     private void OnFrameArrived(MediaFrameReader sender, MediaFrameArrivedEventArgs args)
     {
-        long t0 = Stopwatch.GetTimestamp();
+        if (_disposed || !ReferenceEquals(sender, _reader)) return;
+        if (Interlocked.Exchange(ref _callbackBusy, 1) != 0) { Interlocked.Increment(ref _dropped); return; }
+        var timer = Stopwatch.StartNew();
         try
         {
             using var frame = sender.TryAcquireLatestFrame();
-            var video = frame?.VideoMediaFrame;
-            if (video?.SoftwareBitmap is null) return;
-
-            long t1 = Stopwatch.GetTimestamp();
-
-            using var src = video.SoftwareBitmap;
-
-            // 系统已按 BGRA8 输出（见 CreateFrameReaderAsync），
-            // 这里只做一次纯内存拷贝，保证帧不会被采集线程改写。
-            var converted = SoftwareBitmap.Copy(src);
-
-            long t2 = Stopwatch.GetTimestamp();
-
-            if (_logFormatOnce)
+            using var input = frame?.VideoMediaFrame?.SoftwareBitmap;
+            if (input is null) return;
+            var normalized = input.BitmapPixelFormat == BitmapPixelFormat.Bgra8 && input.BitmapAlphaMode == BitmapAlphaMode.Premultiplied
+                ? SoftwareBitmap.Copy(input)
+                : SoftwareBitmap.Convert(input, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            if ((long)normalized.PixelWidth * normalized.PixelHeight > 1920L * 1080)
             {
-                _logFormatOnce = false;
-                Log($"[VP-WinRT] 帧格式：源 {src.BitmapPixelFormat}/{src.BitmapAlphaMode} "
-                  + $"{src.PixelWidth}×{src.PixelHeight} → 输出 {converted.BitmapPixelFormat}");
+                normalized.Dispose();
+                throw new InvalidOperationException("Driver ignored bounded preview output size.");
             }
-
-            // ── 双缓冲：延迟一帧释放 ──
-            //
-            // ⚠ 不能立刻 Dispose 旧帧：
-            //   它可能正被界面显示、或被 GrabStill() 复制（拍照）。
-            //   之前就是在这里立刻 old?.Dispose()，导致拍照时
-            //   SoftwareBitmap.Copy 抛异常 → GrabStill 返回 null →
-            //   拍照静默失败（状态栏只说"当前没有可用画面"）。
-            //
-            //   现在保留"当前 + 上一帧"两个引用，释放的是更早那一帧 ——
-            //   到那时它已不可能仍在使用。
-            var previous = Interlocked.Exchange(ref _previous, null);
-            var old = Interlocked.Exchange(ref _latest, converted);
-            previous?.Dispose();
-
-            // ── 性能计时 ──
-            // 每秒打印一次各阶段耗时，用来判断瓶颈在哪：
-            //   采集取帧(下) / 格式转换 / 通知投递
-            _perfAcquireTicks += t1 - t0;
-            _perfConvertTicks += t2 - t1;
-            _perfFrames++;
-
-            // 采集帧率：纯统计"设备给了多少帧"，不包含界面渲染开销
-            UpdateFps();
-
-            if (Environment.TickCount64 - _perfWindowStart >= 1000 && _perfFrames > 0)
+            string formatSummary = $"{normalized.BitmapPixelFormat}/{normalized.BitmapAlphaMode}";
+            lock (_frameGate)
             {
-                double msPerTick = 1000.0 / Stopwatch.Frequency;
-
-                Log($"[VP-Perf] 帧数 {_perfFrames}  "
-                  + $"取帧 {_perfAcquireTicks * msPerTick / _perfFrames:F1}ms  "
-                  + $"转换 {_perfConvertTicks * msPerTick / _perfFrames:F1}ms  "
-                  + $"→ {_fps:F1} fps");
-
-                _perfFrames = 0;
-                _perfAcquireTicks = 0;
-                _perfConvertTicks = 0;
-                _perfWindowStart = Environment.TickCount64;
+                if (!ReferenceEquals(sender, _reader)) { normalized.Dispose(); return; }
+                // Ownership transfers to _latest; snapshots are copied under this same lock.
+                var old = _latest;
+                _latest = normalized;
+                old?.Dispose();
             }
-
-            // ⚠ 通知界面用【异步】派发，绝不在采集回调里同步调用。
-            //
-            //   原先是 FrameArrived?.Invoke(...) —— 界面处理（尤其是屏幕编码 /
-            //   远程传输）会把耗时算进采集回调，直接回压到设备，
-            //   表现为 UU 远程时帧率掉到个位数。
-            //
-            //   现在只投递一个"有新帧"的信号，界面自己去取最新帧；
-            //   界面慢的时候丢的是中间帧，而不是拖慢采集。
-            var handler = FrameArrived;
-            if (handler is not null)
+            if (!_formatLogged)
             {
-                _dispatcher?.TryEnqueue(() =>
-                {
-                    var cur = _latest;
-                    if (cur is not null) handler(this, cur);
-                    UpdateDisplayFps();
-                });
+                _formatLogged = true;
+                Log($"First Frame input={input.BitmapPixelFormat}/{input.BitmapAlphaMode} {input.PixelWidth}x{input.PixelHeight}; " +
+                    $"normalized={formatSummary}; callback={timer.Elapsed.TotalMilliseconds:F2}ms");
             }
+            _lastFrame = Environment.TickCount64;
+            _firstFrame?.TrySetResult(true);
+            _received++;
+            long elapsed = Environment.TickCount64 - _windowStart;
+            if (elapsed >= 5000)
+            {
+                Volatile.Write(ref _fps, _received * 1000.0 / elapsed);
+                Log($"PERF acquired={_fps:F1}fps; submittedToImage={DisplayFps:F1}fps; droppedBusy={_dropped}; " +
+                    $"lastCallback={timer.Elapsed.TotalMilliseconds:F2}ms; managedBytes={GC.GetTotalMemory(false)}");
+                _received = 0; _windowStart = Environment.TickCount64;
+            }
+            FrameAvailable?.Invoke(this, EventArgs.Empty); // MainWindow performs bounded, single-flight dispatch.
         }
         catch (Exception ex)
         {
-            Log($"[VP-WinRT] 取帧异常：{ex.Message}");
+            if (!_formatLogged) { _formatLogged = true; AppLog.Error("Frame normalization", ex); }
+            _firstFrame?.TrySetException(ex);
         }
+        finally { Interlocked.Exchange(ref _callbackBusy, 0); }
     }
 
-    /// <summary>采集帧率（设备实际给帧的速度）。</summary>
-    private void UpdateFps()
+    public void ReportPresented()
     {
-        _frameCount++;
-        long now = Environment.TickCount64;
-        long elapsed = now - _fpsWindowStart;
-
+        _presented++;
+        long elapsed = Environment.TickCount64 - _presentStart;
         if (elapsed >= 1000)
         {
-            _fps = _frameCount * 1000.0 / elapsed;
-            _frameCount = 0;
-            _fpsWindowStart = now;
+            Volatile.Write(ref _displayFps, _presented * 1000.0 / elapsed);
+            _presented = 0; _presentStart = Environment.TickCount64;
         }
     }
-
-    /// <summary>界面显示帧率（渲染到屏幕的速度，受远程桌面等影响）。</summary>
-    private void UpdateDisplayFps()
-    {
-        _displayFrames++;
-        long now = Environment.TickCount64;
-        long elapsed = now - _displayWindowStart;
-
-        if (elapsed >= 1000)
-        {
-            _displayFps = _displayFrames * 1000.0 / elapsed;
-            _displayFrames = 0;
-            _displayWindowStart = now;
-        }
-    }
-
-    public void Stop()
-    {
-        _running = false;
-
-        try
-        {
-            if (_frameReader is not null)
-            {
-                _frameReader.FrameArrived -= OnFrameArrived;
-                try { _frameReader.StopAsync().AsTask().ConfigureAwait(false).GetAwaiter().GetResult(); } catch { }
-                _frameReader.Dispose();
-                _frameReader = null;
-            }
-
-            _frameSource = null;
-
-            if (_capture is not null)
-            {
-                _capture.Dispose();
-                _capture = null;
-            }
-
-            var old = Interlocked.Exchange(ref _latest, null);
-            old?.Dispose();
-
-            var prev = Interlocked.Exchange(ref _previous, null);
-            prev?.Dispose();
-
-            _fps = 0;
-            Log("[VP-WinRT] 已停止预览");
-        }
-        catch (Exception ex)
-        {
-            Log($"[VP-WinRT] 停止预览时出错：{ex.Message}");
-        }
-    }
-
-    // ───────────────────────── 取帧 ─────────────────────────
 
     public SoftwareBitmap? GrabStill()
     {
-        var cur = _latest;
-        if (cur is null) return null;
-
-        try
-        {
-            // 预览走原生格式（NV12），但拍照 / 编码需要标准 BGRA8，
-            // 所以在这里做一次性转换 —— 只在用户按快门时发生，不影响帧率。
-            return SoftwareBitmap.Convert(cur, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-        }
-        catch (Exception ex)
-        {
-            Log($"[VP-WinRT] 复制静帧失败：{ex.Message}");
-            return null;
-        }
+        lock (_frameGate) return _latest is null ? null : SoftwareBitmap.Copy(_latest);
     }
 
     public byte[]? GrabFrameBytes()
     {
-        var cur = _latest;
-        if (cur is null) return null;
-
-        SoftwareBitmap? bgra = null;
-        try
-        {
-            // 录像同样需要 BGRA（编码器与我们的 stride 假设都基于它）
-            bgra = SoftwareBitmap.Convert(cur, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-
-            int w = bgra.PixelWidth, h = bgra.PixelHeight;
-            var bytes = new byte[w * 4 * h];
-
-            CopyOut(bgra, bytes);
-            return bytes;
-        }
-        catch (Exception ex)
-        {
-            Log($"[VP-WinRT] 取原始像素失败：{ex.Message}");
-            return null;
-        }
-        finally
-        {
-            bgra?.Dispose();
-        }
+        using var snapshot = GrabStill();
+        return snapshot is null ? null : BitmapPixels.ReadBgra(snapshot);
     }
 
-    /// <summary>
-    /// 把 SoftwareBitmap 的像素拷进托管数组。
-    ///
-    /// <para>
-    /// 注意不能用 WindowsRuntimeBufferExtensions.AsBuffer(byte[]) ——
-    /// 那个扩展方法在 .NET 5+ 的 CsWinRT 投影里已经不存在了。
-    /// 这里走 IMemoryBufferByteAccess（与 MF 实现里写位图用的是同一个接口），
-    /// 拿到原始指针后 Marshal.Copy，最直接也最可靠。
-    /// </para>
-    /// </summary>
-    private static unsafe void CopyOut(SoftwareBitmap bitmap, byte[] destination)
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        using var buffer = bitmap.LockBuffer(BitmapBufferAccessMode.Read);
-        using var reference = buffer.CreateReference();
-
-        ((IMemoryBufferByteAccess)reference).GetBuffer(out byte* ptr, out uint capacity);
-
-        int len = Math.Min(destination.Length, (int)capacity);
-        System.Runtime.InteropServices.Marshal.Copy((IntPtr)ptr, destination, 0, len);
+        RequireUI();
+        await _lifecycle.WaitAsync(cancellationToken);
+        try { await StopCoreAsync(); } finally { _lifecycle.Release(); }
     }
 
-    public void Dispose() => Stop();
+    private async Task StopReaderAsync()
+    {
+        var reader = _reader; _reader = null;
+        if (reader is null) return;
+        reader.FrameArrived -= OnFrameArrived;
+        try { await reader.StopAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { AppLog.Error("Stop frame reader", ex); }
+        reader.Dispose();
+    }
+
+    private async Task StopCoreAsync()
+    {
+        _running = false;
+        await StopReaderAsync();
+        if (_capture is not null) { _capture.Failed -= CaptureFailed; _capture.Dispose(); _capture = null; }
+        lock (_frameGate) { _latest?.Dispose(); _latest = null; }
+        _fps = _displayFps = 0;
+        Log("Stop completed");
+    }
+
+    public void Dispose()
+    {
+        // Normal window close must await StopAsync first. This fallback never blocks the UI thread.
+        _disposed = true; _running = false;
+        if (_reader is not null) { _reader.FrameArrived -= OnFrameArrived; _reader.Dispose(); _reader = null; }
+        if (_capture is not null) { _capture.Failed -= CaptureFailed; _capture.Dispose(); _capture = null; }
+        lock (_frameGate) { _latest?.Dispose(); _latest = null; }
+    }
+
+    private static double Rate(MediaFrameFormat format) => format.FrameRate.Denominator == 0 ? 0 :
+        (double)format.FrameRate.Numerator / format.FrameRate.Denominator;
 }

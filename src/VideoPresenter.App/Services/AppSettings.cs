@@ -24,7 +24,7 @@ namespace VideoPresenter.App.Services;
 /// 每次都写文件既没必要也伤磁盘。这里统一延迟 400ms 合并写一次。
 /// </para>
 /// </summary>
-public sealed class AppSettings : ObservableObject
+public sealed class AppSettings : ObservableObject, IDisposable
 {
     // ───────────────────────── 存储 ─────────────────────────
 
@@ -36,18 +36,11 @@ public sealed class AppSettings : ObservableObject
     };
 
     /// <summary>配置文件路径。</summary>
-    public static string FilePath
-    {
-        get
-        {
-            string dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "UNSA Studio", "VideoDocumentCamera");
-            return Path.Combine(dir, "settings.json");
-        }
-    }
+    public static string FilePath => AppPaths.SettingsFile;
 
     private System.Threading.Timer? _saveTimer;
+    private readonly object _saveGate = new();
+    private bool _disposed;
 
     /// <summary>
     /// 反序列化进行中。
@@ -145,7 +138,7 @@ public sealed class AppSettings : ObservableObject
     /// <summary>界面上显示的目录（空值时的文案）。</summary>
     [JsonIgnore]
     public string PhotoFolderDisplay =>
-        string.IsNullOrWhiteSpace(_photoFolder) ? "（默认）图片\\视频展台" : _photoFolder;
+        string.IsNullOrWhiteSpace(_photoFolder) ? AppPaths.Photos : _photoFolder;
 
     // ───────────────────────── 录像 ─────────────────────────
 
@@ -383,7 +376,13 @@ public sealed class AppSettings : ObservableObject
             try
             {
                 var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
-                return loaded ?? new AppSettings();
+                loaded ??= new AppSettings();
+                if (!string.IsNullOrWhiteSpace(loaded.PhotoFolder) && !AppPaths.IsInsideUsers(loaded.PhotoFolder))
+                {
+                    AppLog.Write("Legacy external PhotoFolder reset to Users; old media retained at original location.", "WARN", "Migration");
+                    loaded.PhotoFolder = "";
+                }
+                return loaded;
             }
             finally
             {
@@ -392,7 +391,7 @@ public sealed class AppSettings : ObservableObject
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP-CFG] 读取设置失败，使用默认值：{ex.Message}");
+            AppLog.Write($"[VP-CFG] 读取设置失败，使用默认值：{ex}");
             return new AppSettings();
         }
     }
@@ -400,32 +399,41 @@ public sealed class AppSettings : ObservableObject
     /// <summary>立即写盘。</summary>
     public void Save()
     {
-        try
+        lock (_saveGate)
         {
             string path = FilePath;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-            // 先写临时文件再替换，避免断电 / 崩溃把配置写坏
-            string tmp = path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(this, JsonOptions));
-
-            if (File.Exists(path)) File.Delete(path);
-            File.Move(tmp, path);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[VP-CFG] 保存设置失败：{ex.Message}");
+            string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this, JsonOptions));
+                using (var file = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    file.Write(bytes);
+                    file.Flush(true);
+                }
+                File.Move(tmp, path, overwrite: true); // Never delete the last good config first.
+                AppLog.Write("Settings saved: " + path, category: "Settings");
+            }
+            catch (Exception ex) { AppLog.Error("Save settings (last good file retained)", ex); }
+            finally { if (File.Exists(tmp)) File.Delete(tmp); }
         }
     }
 
     /// <summary>防抖：合并 400ms 内的多次改动，只写一次盘。</summary>
     private void ScheduleSave()
     {
-        if (s_loading) return;
+        if (s_loading || _disposed) return;
 
         _saveTimer ??= new System.Threading.Timer(_ => Save(), null,
             System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
 
         _saveTimer.Change(400, System.Threading.Timeout.Infinite);
+    }
+    public void Dispose()
+    {
+        _disposed = true;
+        _saveTimer?.Dispose();
+        Save();
     }
 }

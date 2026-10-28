@@ -34,3 +34,6 @@ certs/
 *.tmp
 Thumbs.db
 .DS_Store
+# Runtime data and local diagnostics test output
+Users/
+tests/diagnostics-test-output.txt

@@ -322,7 +322,7 @@
                     <Button Command="{x:Bind Vm.ScanCommand}"
                             Background="Transparent" BorderThickness="0"
                             Width="64" Height="58" Padding="0" CornerRadius="4"
-                            ToolTipService.ToolTip="扫描：自动裁边 + 透视矫正">
+                            ToolTipService.ToolTip="扫描：基础自动裁边（不含透视校正）">
                         <StackPanel Spacing="4">
                             <FontIcon Glyph="&#xE8FE;" FontSize="18"/>
                             <TextBlock Text="扫描" FontSize="11" HorizontalAlignment="Center"/>

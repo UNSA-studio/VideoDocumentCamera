@@ -122,9 +122,13 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："
 Name: "launchafter"; Description: "安装完成后立即运行 视频展台"; GroupDescription: "附加任务："; Flags: unchecked
 
+[Dirs]
+Name: "{app}\Users"; Permissions: users-modify; Flags: uninsneveruninstall
+Name: "{app}\Users\Shared\CrashDumps"; Permissions: users-modify; Flags: uninsneveruninstall
+
 [Files]
 ; 打包整个发布目录（含启动器、主程序与运行时）
-Source: "..\..\dist\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\dist\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Users\*"
 
 [Icons]
 Name: "{group}\视频展台"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
@@ -134,9 +138,7 @@ Name: "{autodesktop}\视频展台"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 视频展台"; Flags: nowait postinstall skipifsilent; Tasks: launchafter
 
-[UninstallDelete]
-; 运行时产生的日志/缓存（用户素材保存在"图片\视频展台"，卸载时保留）
-Type: filesandordirs; Name: "{localappdata}\UNSA Studio\视频展台"
+ ; User data in Users is NEVER removed by upgrade or uninstall.
 
 [Registry]
 ; 供主程序读取「安装来源」，便于诊断
@@ -144,3 +146,11 @@ Root: HKLM; Subkey: "Software\UNSA Studio\视频展台"; ValueType: string; \
     ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletekey
 Root: HKLM; Subkey: "Software\UNSA Studio\视频展台"; ValueType: string; \
     ValueName: "LauncherExe"; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey
+; WER configuration is per executable, not the global LocalDumps policy.
+; Keep minidumps on the installation drive rather than the default AppData path.
+Root: HKLM; Subkey: "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.exe"; ValueType: expandsz; ValueName: "DumpFolder"; ValueData: "{app}\Users\Shared\CrashDumps"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.exe"; ValueType: dword; ValueName: "DumpType"; ValueData: "1"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.exe"; ValueType: dword; ValueName: "DumpCount"; ValueData: "5"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.Launcher.exe"; ValueType: expandsz; ValueName: "DumpFolder"; ValueData: "{app}\Users\Shared\CrashDumps"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.Launcher.exe"; ValueType: dword; ValueName: "DumpType"; ValueData: "1"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.Launcher.exe"; ValueType: dword; ValueName: "DumpCount"; ValueData: "5"; Flags: uninsdeletekey

@@ -354,22 +354,7 @@ public sealed class RecordingService : IDisposable
         return type;
     }
 
-    private static void Log(string message)
-    {
-        Debug.WriteLine(message);
-
-        try
-        {
-            string file = WinRtCameraService.LogFilePath;
-            var fi = new FileInfo(file);
-            if (fi.Exists && fi.Length > 1024 * 1024) fi.Delete();
-
-            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-            File.AppendAllText(file,
-                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  {message}{Environment.NewLine}");
-        }
-        catch { }
-    }
+    private static void Log(string message) => AppLog.Write(message, category: "Recording");
 
     public void Dispose()
     {

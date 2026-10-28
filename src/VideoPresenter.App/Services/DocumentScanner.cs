@@ -5,7 +5,7 @@
 // https://polyformproject.org/licenses/noncommercial/1.0.0
 //
 // ============================================================================
-//  DocumentScanner.cs —— 文档自动裁剪 + 透视矫正
+//  DocumentScanner.cs —— 文档自动裁剪 + 基础裁剪
 //
 //  对标希沃 EasiCamera 的「一键扫描 / 自动裁剪」招牌功能。
 //
@@ -47,7 +47,7 @@ internal static class DocumentScanner
     // ───────────────────────── 公开入口 ─────────────────────────
 
     /// <summary>
-    /// 对一帧做"自动裁边 + 透视矫正"。
+    /// 对一帧做"自动裁边 + 基础裁剪"。
     ///
     /// <para>
     /// 输入约定为 BGRA8（调用方从 GrabStill 拿到后已转换）。
@@ -81,7 +81,7 @@ internal static class DocumentScanner
                 };
             }
 
-            // ④ 透视矫正
+            // ④ 基础裁剪
             var rectified = Rectify(bgra, w, h, corners);
 
             return new ScanResult
@@ -94,7 +94,7 @@ internal static class DocumentScanner
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP-Scan] 扫描失败：{ex}");
+            AppLog.Write($"[VP-Scan] 扫描失败：{ex}");
             return new ScanResult { Found = false, Message = $"扫描失败：{ex.Message}" };
         }
     }
@@ -102,20 +102,7 @@ internal static class DocumentScanner
     // ───────────────────────── 像素读写 ─────────────────────────
 
     /// <summary>把 SoftwareBitmap（BGRA8）读成托管数组。</summary>
-    private static unsafe byte[] ReadPixels(SoftwareBitmap bmp)
-    {
-        int w = bmp.PixelWidth, h = bmp.PixelHeight;
-        var bytes = new byte[w * 4 * h];
-
-        using var buffer = bmp.LockBuffer(BitmapBufferAccessMode.Read);
-        using var reference = buffer.CreateReference();
-
-        ((IMemoryBufferByteAccess)reference).GetBuffer(out byte* ptr, out uint cap);
-        int len = Math.Min(bytes.Length, (int)cap);
-        System.Runtime.InteropServices.Marshal.Copy((IntPtr)ptr, bytes, 0, len);
-
-        return bytes;
-    }
+    private static byte[] ReadPixels(SoftwareBitmap bmp) => BitmapPixels.ReadBgra(bmp);
 
     /// <summary>BGRA → 灰度（BT.601 权重）。</summary>
     private static byte[] ToGray(byte[] bgra, int w, int h)
@@ -280,7 +267,7 @@ internal static class DocumentScanner
         return values[(from + to) / 2];
     }
 
-    // ───────────────────────── 透视矫正 ─────────────────────────
+    // ───────────────────────── 基础裁剪 ─────────────────────────
 
     /// <summary>
     /// 把四角围成的四边形拉成矩形（双线性采样的反向映射）。
@@ -352,17 +339,5 @@ internal static class DocumentScanner
     }
 
     /// <summary>托管数组 → SoftwareBitmap（BGRA8）</summary>
-    private static unsafe SoftwareBitmap FromPixels(byte[] bgra, int w, int h)
-    {
-        var bmp = new SoftwareBitmap(BitmapPixelFormat.Bgra8, w, h, BitmapAlphaMode.Premultiplied);
-
-        using var buffer = bmp.LockBuffer(BitmapBufferAccessMode.Write);
-        using var reference = buffer.CreateReference();
-
-        ((IMemoryBufferByteAccess)reference).GetBuffer(out byte* ptr, out uint cap);
-        int len = Math.Min(bgra.Length, (int)cap);
-        System.Runtime.InteropServices.Marshal.Copy(bgra, 0, (IntPtr)ptr, len);
-
-        return bmp;
-    }
+    private static SoftwareBitmap FromPixels(byte[] bgra, int w, int h) => BitmapPixels.FromBgra(bgra, w, h);
 }

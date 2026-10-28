@@ -5,6 +5,7 @@
 // https://polyformproject.org/licenses/noncommercial/1.0.0
 //
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using Microsoft.UI.Xaml;
 using VideoPresenter.App.Boot;
@@ -24,15 +25,22 @@ public partial class App : Application
 
     public App()
     {
-        InitializeComponent();
-
-        // 未处理异常兜底：回报给启动器，避免 Splash 干等
+        try { AppLog.Initialize(); }
+        catch (Exception ex)
+        {
+            ShowFatalError(new IOException("无法写入应用目录下的 Users：" + AppPaths.UsersRoot +
+                "。请重新安装以修复该数据目录权限，或把便携版放到可写目录；不会悄悄写入 C 盘。", ex));
+            throw;
+        }
         UnhandledException += (_, e) =>
         {
-            Debug.WriteLine($"[VP] 未处理异常：{e.Exception}");
+            AppLog.Fatal("WinUI.UnhandledException", e.Exception);
             BootSignal.Instance.ReportFailure(e.Exception.Message);
-            e.Handled = true;
+            // Do not mask an unknown fatal UI fault and keep running in a corrupt state.
+            e.Handled = false;
         };
+        try { InitializeComponent(); }
+        catch (Exception ex) { AppLog.Fatal("InitializeComponent", ex); throw; }
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
@@ -51,6 +59,7 @@ public partial class App : Application
         if (!createdNew)
         {
             WindowApiService.BroadcastActivate();
+            AppLog.CompleteSession();
             Environment.Exit(0);
             return;
         }
@@ -66,13 +75,14 @@ public partial class App : Application
             {
                 BootSignal.Instance.Dispose();
                 _singleInstanceMutex?.Dispose();
+                AppLog.CompleteSession();
             };
 
             _window.Activate();
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[VP] 主窗口创建失败：{ex}");
+            AppLog.Fatal("Create MainWindow", ex);
             BootSignal.Instance.ReportFailure(ex.Message);
             ShowFatalError(ex);
         }
@@ -98,7 +108,7 @@ public partial class App : Application
         BootElapsedMs = BootSignal.Instance.ElapsedMs;
         BootSignal.Instance.NotifyWindowReady(window);
 
-        Debug.WriteLine(BootSignal.Instance.HasSession
+        AppLog.Write(BootSignal.Instance.HasSession
             ? $"[VP-Boot] 主窗口就绪，端到端 {BootElapsedMs} ms（启动器 → WinUI 3 首帧）"
             : "[VP-Boot] 开发模式运行，无启动器计时");
     }

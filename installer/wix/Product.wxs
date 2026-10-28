@@ -75,7 +75,13 @@
                       （此前 ICE30 报错里实际出现过 [ProgramFiles64Folder]\i8gueiie\????\）
                     · 用户可见的显示名仍然是中文「视频展台」（快捷方式 / 控制面板）
                 -->
-                <Directory Id="INSTALLFOLDER" Name="vdc"/>
+                <Directory Id="INSTALLFOLDER" Name="vdc">
+                    <Directory Id="VPUSERS" Name="Users">
+                        <Directory Id="VPSHARED" Name="Shared">
+                            <Directory Id="VPDUMPS" Name="CrashDumps"/>
+                        </Directory>
+                    </Directory>
+                </Directory>
             </Directory>
         </StandardDirectory>
 
@@ -89,6 +95,7 @@
         <Feature Id="MainFeature" Title="视频展台" Level="1" AllowAbsent="no">
             <ComponentGroupRef Id="AppFilesGroup"/>
             <ComponentGroupRef Id="ShortcutGroup"/>
+            <ComponentGroupRef Id="DataAndDiagnosticsGroup"/>
         </Feature>
 
     </Package>
@@ -142,4 +149,29 @@
         </ComponentGroup>
     </Fragment>
 
+    <Fragment>
+        <ComponentGroup Id="DataAndDiagnosticsGroup">
+            <!-- User data only: executables/DLLs retain normal Program Files protection. -->
+            <Component Id="VpUsersFolder" Directory="VPUSERS" Guid="{70DAE7D5-1846-488D-BEC4-C5785F114716}" Permanent="yes" NeverOverwrite="yes">
+                <CreateFolder>
+                    <PermissionEx Id="VpUsersAcl" Sddl="D:AI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;BU)"/>
+                </CreateFolder>
+            </Component>
+            <Component Id="VpDumpsFolder" Directory="VPDUMPS" Guid="{BCB3E618-A831-407A-A643-8B947EF34BA2}" Permanent="yes" NeverOverwrite="yes">
+                <CreateFolder/>
+            </Component>
+            <Component Id="VpWerSettings" Directory="INSTALLFOLDER" Guid="{3231E676-8158-4DC6-9229-1C5CC92A77AE}">
+                <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.exe">
+                    <RegistryValue Name="DumpFolder" Type="expandable" Value="[INSTALLFOLDER]Users\Shared\CrashDumps"/>
+                    <RegistryValue Name="DumpType" Type="integer" Value="1"/>
+                    <RegistryValue Name="DumpCount" Type="integer" Value="5"/>
+                </RegistryKey>
+                <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\VideoPresenter.Launcher.exe">
+                    <RegistryValue Name="DumpFolder" Type="expandable" Value="[INSTALLFOLDER]Users\Shared\CrashDumps"/>
+                    <RegistryValue Name="DumpType" Type="integer" Value="1"/>
+                    <RegistryValue Name="DumpCount" Type="integer" Value="5"/>
+                </RegistryKey>
+            </Component>
+        </ComponentGroup>
+    </Fragment>
 </Wix>
