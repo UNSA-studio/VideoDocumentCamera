@@ -5,6 +5,7 @@
     <RuntimeIdentifier></RuntimeIdentifier><Platforms>AnyCPU</Platforms>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/VideoPresenter.App/Services/NativeOperationGuard.cs" Link="NativeOperationGuard.cs"/>
     <Compile Include="../../src/VideoPresenter.App/Services/AppPaths.cs" Link="AppPaths.cs"/>
     <Compile Include="../../src/VideoPresenter.App/Services/AppLog.cs" Link="AppLog.cs"/>
     <Compile Include="../../src/VideoPresenter.App/Services/MonthlyLogArchiver.cs" Link="MonthlyLogArchiver.cs"/>

@@ -406,7 +406,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         else if (_camera is Services.WinRtCameraService winrt)
         {
-            FpsText = $"采集 {_camera.Fps:F0} / 提交 {winrt.DisplayFps:F0} fps";
+            FpsText = $"处理 {_camera.Fps:F0} / 提交 {winrt.DisplayFps:F0} fps";
         }
         else
         {
@@ -524,15 +524,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task CaptureAsync()
     {
-        await SaveCurrentFrameAsync();
-
-        // SaveBitmapAsync 内部已插入素材并返回路径，这里补一句状态提示
-        if (StatusText?.StartsWith("保存失败") != true && StatusText?.StartsWith("拍照失败") != true)
-        {
-            var latest = Snapshots.FirstOrDefault();
-            if (latest is not null)
-                StatusText = $"已拍摄：{Path.GetFileName(latest.FilePath)}";
-        }
+        string path = await SaveCurrentFrameAsync();
+        if (!string.IsNullOrEmpty(path)) StatusText = $"已拍摄：{Path.GetFileName(path)}";
     }
 
     /// <summary>
@@ -562,17 +555,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async Task BurstCaptureAsync()
     {
         int count = (int)Settings.BurstCount;   // 张数由设置决定（2~9）
-        int interval = 130;
+        int succeeded = 0;
 
         for (int i = 0; i < count; i++)
         {
-            await SaveCurrentFrameAsync();
+            if (_shuttingDown) break;
+            if (!string.IsNullOrEmpty(await SaveCurrentFrameAsync())) succeeded++;
             await Task.Delay(130);
         }
-        StatusText = $"连拍完成（{count} 张）";
+        StatusText = $"连拍结束：成功 {succeeded}/{count} 张";
     }
 
-    private async Task SaveCurrentFrameAsync()
+    private async Task<string> SaveCurrentFrameAsync()
     {
         // GrabStill 返回副本，避免采集线程改写导致撕裂
         using var still = await AcquireFrameAsync();
@@ -580,12 +574,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             Services.WinRtCameraService.Log("[VP] 拍照失败：拿不到当前帧（GrabStill 返回 null）");
             StatusText = "拍照失败：当前没有可用画面";
-            return;
+            return string.Empty;
         }
 
         Services.WinRtCameraService.Log($"[VP] 拍照：取得帧 {still.PixelWidth}×{still.PixelHeight}");
 
-        await SaveBitmapAsync(still, null);
+        return await SaveBitmapAsync(still, null);
     }
 
     /// <summary>
@@ -598,6 +592,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     private async Task<string> SaveBitmapAsync(SoftwareBitmap bitmap, string? prefixOverride)
     {
+        StorageFile? incompleteFile = null;
         try
         {
             var now = DateTime.Now;
@@ -614,12 +609,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             Services.WinRtCameraService.Log($"[VP] 保存目标：{path}");
 
-            // ⚠ 不要用 FileRandomAccessStream.OpenAsync(path, ...)：
-            //   它对"尚未存在的文件"行为不稳定，实测会抛
-            //   "Unable to find the specified file"（0x80070002）。
-            //   正确做法是先通过 StorageFolder 创建文件，再拿它的流。
+            // Publish only after encoding succeeds; never replace a photo with a same-millisecond name.
             var folder = await StorageFolder.GetFolderFromPathAsync(folderPath);
-            var newFile = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
+            var newFile = await folder.CreateFileAsync(".pending-" + Guid.NewGuid().ToString("N") + ext, CreationCollisionOption.FailIfExists);
+            incompleteFile = newFile;
 
             using (var stream = await newFile.OpenAsync(FileAccessMode.ReadWrite))
             {
@@ -642,6 +635,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 await encoder.FlushAsync();
             }
 
+            await newFile.RenameAsync(fileName, NameCollisionOption.GenerateUniqueName);
+            path = newFile.Path;
+            fileName = newFile.Name;
+            incompleteFile = null;
             Services.WinRtCameraService.Log($"[VP] 保存成功：{fileName}");
 
             // 拍照提示音（可在设置里开关）
@@ -692,6 +689,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
+            if (incompleteFile is not null)
+            {
+                try { await incompleteFile.DeleteAsync(StorageDeleteOption.PermanentDelete); }
+                catch (Exception cleanup) { AppLog.Error("Remove incomplete photo", cleanup); }
+            }
             StatusText = $"保存失败：{ex.Message}";
             AppLog.Write($"[VP] 保存照片失败：{ex}");
             Services.WinRtCameraService.Log($"[VP] 保存失败：{ex}");

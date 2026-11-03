@@ -1,0 +1,41 @@
+{
+  "sources": {
+    "mfapi.h": {
+      "url": "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/mfapi.h",
+      "sha256": "454652a6c9e35c149410e77fb001101dd33486c29d71b009929fab467c129e4e"
+    },
+    "mfobjects.h": {
+      "url": "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/mfobjects.h",
+      "sha256": "d89d1570d46c75a4c4802c0b62ba52f6b2b71dab68ccb8caea316dce55cd5853"
+    },
+    "mfreadwrite.h": {
+      "url": "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/mfreadwrite.h",
+      "sha256": "bae7c1336bd0fe9a7f9386a6b13faa553ab759bced13a17841a8ba02bf1b5d3b"
+    },
+    "mfidl.h": {
+      "url": "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/mfidl.h",
+      "sha256": "7652d22759cbcd6022f000694a16c7aedad57dc49bcdb899765c7ec4abb2904f"
+    }
+  },
+  "identifiers": {
+    "IMFActivate": "7fee9e9a-4a89-47a6-899c-b6a53a70fb67",
+    "IMFAttributes": "2cd2d921-c447-44a7-a13c-4adabfc247e3",
+    "IMFMediaBuffer": "045fa593-8799-42b8-bc8d-8968c6453507",
+    "IMFMediaType": "44ae0fa8-ea31-4109-8d2e-4cae4997c555",
+    "IMFSample": "c40a00f2-b93a-4d80-ae8c-5a1c634f58e4",
+    "IMFSinkWriter": "3137f1cd-fe5e-4805-a5d8-fb477448cb3d",
+    "IMFSourceReader": "70ae66f2-c809-4e4f-8915-bdcb406b7993",
+    "MFMediaType_Video": "73646976-0000-0010-8000-00aa00389b71",
+    "MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME": "60d0e559-52f8-4fa2-bbce-acdb34a8ec01",
+    "MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE": "c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3",
+    "MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID": "8ac3587a-4ae7-42d8-99e0-0a6013eef90f",
+    "MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK": "58f0aad8-22bf-4f8a-bb3d-d2c4978c6e2f",
+    "MF_MT_AVG_BITRATE": "20332624-fb0d-4d9e-bd0d-cbf6786c102e",
+    "MF_MT_FRAME_RATE": "c459a2e8-3d2c-4e44-b132-fee5156c7bb0",
+    "MF_MT_FRAME_SIZE": "1652c33d-d6b2-4012-b834-72030849a37d",
+    "MF_MT_INTERLACE_MODE": "e2724bb8-e676-4806-b4b2-a8d6efb44ccd",
+    "MF_MT_MAJOR_TYPE": "48eba18e-f8c9-4687-bf11-0a74c9f96a8f",
+    "MF_MT_SUBTYPE": "f7e34c9a-42e8-4714-b74b-cb29d72c35e5",
+    "MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING": "fb394f3d-ccf1-42ee-bbb3-f9b845d5681d"
+  }
+}

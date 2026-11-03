@@ -26,17 +26,27 @@ public sealed class WinRtCameraService : ICameraService
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly object _frameGate = new();
     private readonly List<CameraDevice> _devices = new();
-    private MediaCapture? _capture;
-    private MediaFrameReader? _reader;
+    private sealed class CameraSession
+    {
+        public readonly MediaCapture Capture = new();
+        public readonly NativeOperationGuard Operations = new();
+        public MediaFrameReader? Reader;
+        public Task? StopTask;
+        public bool AcceptFrames;
+        public bool FailedSubscribed;
+        public Exception? Failure;
+        public TaskCompletionSource<bool> FirstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+    private volatile CameraSession? _session;
+    private Task _cleanup = Task.CompletedTask;
     private SoftwareBitmap? _latest;
-    private TaskCompletionSource<bool>? _firstFrame;
     private volatile bool _running;
     private bool _disposed;
     private int _callbackBusy;
     private long _received, _dropped, _windowStart, _lastFrame, _presented, _presentStart;
     private double _fps, _displayFps;
     private bool _formatLogged;
-    private int _deferredInitializations;
+    private long _lastFrameError;
     public IReadOnlyList<CameraDevice> Devices => _devices;
     public bool IsRunning => _running;
     public double Fps => Volatile.Read(ref _fps);
@@ -82,6 +92,14 @@ public sealed class WinRtCameraService : ICameraService
         }
     }
 
+    private void EnsureCleanupComplete()
+    {
+        if (!_cleanup.IsCompletedSuccessfully)
+            throw new InvalidOperationException(_cleanup.IsCompleted
+                ? "上一次设备清理失败，禁止复用；请重启应用并保留日志。"
+                : "上一次驱动操作尚未结束，禁止重叠打开；请稍后重试或重新插拔设备。");
+    }
+
     public async Task<bool> StartAsync(CameraDevice device, CancellationToken cancellationToken = default)
     {
         RequireUI();
@@ -90,15 +108,15 @@ public sealed class WinRtCameraService : ICameraService
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_deferredInitializations > 0)
-                throw new InvalidOperationException("上一次驱动初始化仍未返回；请稍后重试或重新插拔设备。");
+            EnsureCleanupComplete();
             await StopCoreAsync();
+            EnsureCleanupComplete();
             Log($"Connect BEGIN name={device.Name}; id={device.SymbolicLink}; apartment={Thread.CurrentThread.GetApartmentState()}");
-            Exception? initializationFailure = null;
             foreach (var sharing in new[] { MediaCaptureSharingMode.ExclusiveControl, MediaCaptureSharingMode.SharedReadOnly })
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var capture = new MediaCapture();
+                var session = new CameraSession();
+                _session = session;
                 var settings = new MediaCaptureInitializationSettings
                 {
                     VideoDeviceId = device.SymbolicLink,
@@ -106,99 +124,121 @@ public sealed class WinRtCameraService : ICameraService
                     MemoryPreference = MediaCaptureMemoryPreference.Cpu,
                     SharingMode = sharing,
                 };
-                Task initialize;
-                try { initialize = capture.InitializeAsync(settings).AsTask(); }
-                catch { capture.Dispose(); throw; }
                 try
                 {
                     Log($"Initialize BEGIN sharing={sharing}");
-                    await initialize.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
-                    _capture = capture;
-                    _capture.Failed += CaptureFailed;
+                    await session.Operations.RunAsync(() => session.Capture.InitializeAsync(settings).AsTask(),
+                        TimeSpan.FromSeconds(15), cancellationToken);
+                    ObjectDisposedException.ThrowIf(_disposed || !ReferenceEquals(session, _session), this);
+                    session.Capture.Failed += CaptureFailed;
+                    session.FailedSubscribed = true;
                     Log($"Initialize END sharing={sharing}; elapsed={clock.ElapsedMilliseconds}ms");
                 }
+                catch (OperationCanceledException) { throw; }
+                catch (TimeoutException) { throw; }
                 catch (Exception ex)
                 {
-                    initializationFailure = ex;
-                    // WaitAsync timeout/cancellation does not stop native initialization. Do NOT dispose it mid-call.
-                    if (!initialize.IsCompleted)
-                    {
-                        _deferredInitializations++;
-                        _ = initialize.ContinueWith(t =>
-                        {
-                            _ = t.Exception;
-                            _ui.TryEnqueue(() => { capture.Dispose(); _deferredInitializations--; Log("Deferred initialization finished; resource released."); });
-                        }, TaskScheduler.Default);
-                        throw;
-                    }
-                    capture.Dispose();
                     AppLog.Error("Initialize sharing=" + sharing, ex);
-                    if (ex is OperationCanceledException || sharing == MediaCaptureSharingMode.SharedReadOnly) throw;
+                    await StopCoreAsync();
+                    EnsureCleanupComplete();
+                    if (sharing == MediaCaptureSharingMode.SharedReadOnly) throw;
                     continue;
                 }
-                var source = _capture.FrameSources.Values
-                    .Where(s => s.Info.SourceKind == MediaFrameSourceKind.Color)
-                    .OrderByDescending(s => s.Info.MediaStreamType == MediaStreamType.VideoPreview)
+                var source = session.Capture.FrameSources.Values
+                    .Where(v => v.Info.SourceKind == MediaFrameSourceKind.Color)
+                    .OrderByDescending(v => v.Info.MediaStreamType == MediaStreamType.VideoPreview)
                     .FirstOrDefault() ?? throw new InvalidOperationException("设备未提供彩色视频流。");
                 Log($"Source id={source.Info.Id}; kind={source.Info.SourceKind}; stream={source.Info.MediaStreamType}");
                 foreach (var format in source.SupportedFormats)
                     Log($"Supported {format.VideoFormat?.Width}x{format.VideoFormat?.Height} @{Rate(format):F2} {format.Subtype}");
                 if (sharing == MediaCaptureSharingMode.ExclusiveControl)
                 {
-                    var chosen = source.SupportedFormats.Where(f => f.VideoFormat is not null &&
-                        (long)f.VideoFormat.Width * f.VideoFormat.Height <= 1920L * 1080 && Rate(f) <= 60)
-                        .OrderByDescending(f => Rate(f) >= 25)
-                        .ThenByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
-                        .ThenByDescending(Rate).FirstOrDefault();
+                    var formats = source.SupportedFormats.Where(f => f.VideoFormat is not null &&
+                        f.VideoFormat.Width > 0 && f.VideoFormat.Height > 0 &&
+                        (long)f.VideoFormat.Width * f.VideoFormat.Height <= 1920L * 1080 && Rate(f) > 0 && Rate(f) <= 60).ToArray();
+                    var chosen = formats.Where(f => Rate(f) >= 25)
+                        .OrderByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height)
+                        .ThenByDescending(Rate).FirstOrDefault()
+                        ?? formats.OrderByDescending(Rate).ThenByDescending(f => (long)f.VideoFormat.Width * f.VideoFormat.Height).FirstOrDefault();
                     if (chosen is not null)
                     {
                         try
                         {
-                            await source.SetFormatAsync(chosen).AsTask().WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
+                            await session.Operations.RunAsync(() => source.SetFormatAsync(chosen).AsTask(),
+                                TimeSpan.FromSeconds(8), cancellationToken);
                             Log($"Selected {chosen.VideoFormat.Width}x{chosen.VideoFormat.Height} @{Rate(chosen):F2} {chosen.Subtype}");
                         }
                         catch (OperationCanceledException) { throw; }
-                        catch (Exception ex) { AppLog.Error("Set source format; inspect actual current format below", ex); }
+                        catch (TimeoutException) { throw; } // Never inspect/reconfigure a still-changing source.
+                        catch (Exception ex) { AppLog.Error("Set source format failed; inspect actual format", ex); }
                     }
                 }
                 else Log("SharedReadOnly: SetFormatAsync intentionally skipped; the controller owns source format.");
                 var current = source.CurrentFormat;
-                Log($"Actual input {current.VideoFormat.Width}x{current.VideoFormat.Height} @{Rate(current):F2} {current.Subtype}");
-                double scale = Math.Min(1.0, Math.Min(1920.0 / current.VideoFormat.Width, 1080.0 / current.VideoFormat.Height));
-                var size = new BitmapSize { Width = Math.Max(2u, (uint)(current.VideoFormat.Width * scale) / 2 * 2),
-                    Height = Math.Max(2u, (uint)(current.VideoFormat.Height * scale) / 2 * 2) };
-                // SoftwareBitmapSource requires BGRA8 + premultiplied alpha. NV12 is NOT directly displayable by it.
+                if (current?.VideoFormat is not { Width: > 0, Height: > 0 } video)
+                    throw new InvalidOperationException("设备返回了无效的视频尺寸，不能创建预览读取器。");
+                Log($"Actual input {video.Width}x{video.Height} @{Rate(current):F2} {current.Subtype}");
+                double scale = Math.Min(1.0, Math.Min(1920.0 / video.Width, 1080.0 / video.Height));
+                var size = new BitmapSize { Width = Math.Max(2u, (uint)(video.Width * scale) / 2 * 2),
+                    Height = Math.Max(2u, (uint)(video.Height * scale) / 2 * 2) };
                 foreach (string subtype in new[] { MediaEncodingSubtypes.Bgra8, current.Subtype }.Distinct())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
                         Log($"Probe BEGIN subtype={subtype}; output={size.Width}x{size.Height}");
-                        _reader = await _capture.CreateFrameReaderAsync(source, subtype, size).AsTask()
-                            .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-                        _reader.AcquisitionMode = MediaFrameReaderAcquisitionMode.Realtime;
-                        _reader.FrameArrived += OnFrameArrived;
-                        _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        // The owned task stores a late result in THIS session, never in the next session.
+                        await session.Operations.RunAsync(async () =>
+                        {
+                            session.Reader = await session.Capture.CreateFrameReaderAsync(source, subtype, size);
+                        }, TimeSpan.FromSeconds(10), cancellationToken);
+                        ObjectDisposedException.ThrowIf(_disposed || !ReferenceEquals(session, _session), this);
+                        var reader = session.Reader!;
+                        reader.AcquisitionMode = MediaFrameReaderAcquisitionMode.Realtime;
+                        session.FirstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        session.StopTask = null;
+                        lock (_frameGate) session.AcceptFrames = true;
+                        reader.FrameArrived += OnFrameArrived;
                         _formatLogged = false;
                         _received = _dropped = _presented = 0;
                         _windowStart = _presentStart = Environment.TickCount64;
-                        var result = await _reader.StartAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                        var result = await session.Operations.RunAsync(() => reader.StartAsync().AsTask(),
+                            TimeSpan.FromSeconds(10), cancellationToken);
+                        ObjectDisposedException.ThrowIf(_disposed || !ReferenceEquals(session, _session), this);
                         Log($"Reader Start status={result}");
                         if (result != MediaFrameReaderStartStatus.Success)
                             throw new InvalidOperationException("帧读取器启动失败：" + result);
-                        await _firstFrame.Task.WaitAsync(TimeSpan.FromSeconds(6), cancellationToken);
-                        _running = true;
-                        DiagnosticsText = $"已收到可显示帧：{device.Name}；输出 BGRA8/Premultiplied";
+                        try { await session.FirstFrame.Task.WaitAsync(TimeSpan.FromSeconds(6), cancellationToken); }
+                        catch (TimeoutException ex)
+                        {
+                            // Unlike a native operation timeout, the first-frame waiter owns no pending native call.
+                            AppLog.Error("No first normalized frame; stop reader before trying next subtype", ex);
+                            await StopReaderAsync(session);
+                            continue;
+                        }
+                        cancellationToken.ThrowIfCancellationRequested();
+                        lock (_frameGate)
+                        {
+                            if (session.Failure is not null) throw session.Failure;
+                            _running = true;
+                        }
+                        DiagnosticsText = $"已收到规范化视频帧：{device.Name}；尚需确认界面显示";
                         StatusChanged?.Invoke(this, DiagnosticsText);
-                        Log($"Connect END first usable frame verified; elapsed={clock.ElapsedMilliseconds}ms");
+                        Log($"Connect END first normalized frame verified; elapsed={clock.ElapsedMilliseconds}ms");
                         return true;
                     }
                     catch (OperationCanceledException) { throw; }
-                    catch (Exception ex) { AppLog.Error("Probe subtype=" + subtype, ex); await StopReaderAsync(); }
+                    catch (TimeoutException) { throw; } // Abort, retire, and wait for late native completion.
+                    catch (Exception ex)
+                    {
+                        AppLog.Error("Probe subtype=" + subtype, ex);
+                        await StopReaderAsync(session);
+                        if (session.Failure is not null) throw;
+                    }
                 }
-                break; // Initialized but no usable frames: report the actual failure instead of blaming occupancy.
+                break;
             }
-            throw new InvalidOperationException("没有收到可用视频帧；请查看日期日志中的 Probe/Frame 异常。", initializationFailure);
+            throw new InvalidOperationException("没有收到可用视频帧；请查看日期日志中的 Probe/Frame 异常。");
         }
         catch (OperationCanceledException) { Log("Connect CANCELLED"); await StopCoreAsync(); return false; }
         catch (Exception ex)
@@ -214,17 +254,32 @@ public sealed class WinRtCameraService : ICameraService
 
     private void CaptureFailed(MediaCapture sender, MediaCaptureFailedEventArgs args)
     {
-        _running = false;
+        CameraSession? session;
+        string message = $"采集失败：{args.Message} (0x{args.Code:X8})";
+        lock (_frameGate)
+        {
+            session = _session;
+            if (session is null || !ReferenceEquals(sender, session.Capture)) return;
+            session.Failure = new InvalidOperationException(message);
+            session.AcceptFrames = false;
+            _running = false;
+            DiagnosticsText = message;
+        }
+        session.FirstFrame.TrySetException(session.Failure);
         Log($"Capture FAILED code=0x{args.Code:X8}; message={args.Message}");
-        DiagnosticsText = $"采集失败：{args.Message} (0x{args.Code:X8})";
-        _firstFrame?.TrySetException(new InvalidOperationException(DiagnosticsText));
-        StatusChanged?.Invoke(this, DiagnosticsText);
+        StatusChanged?.Invoke(this, message);
     }
 
     private void OnFrameArrived(MediaFrameReader sender, MediaFrameArrivedEventArgs args)
     {
-        if (_disposed || !ReferenceEquals(sender, _reader)) return;
-        if (Interlocked.Exchange(ref _callbackBusy, 1) != 0) { Interlocked.Increment(ref _dropped); return; }
+        CameraSession? session;
+        lock (_frameGate)
+        {
+            session = _session;
+            if (_disposed || session is null || !session.AcceptFrames || !ReferenceEquals(sender, session.Reader)) return;
+            // Admission and stop/invalidation use the same lock, so cleanup cannot miss a callback about to enter.
+            if (Interlocked.Exchange(ref _callbackBusy, 1) != 0) { Interlocked.Increment(ref _dropped); return; }
+        }
         var timer = Stopwatch.StartNew();
         try
         {
@@ -242,7 +297,7 @@ public sealed class WinRtCameraService : ICameraService
             string formatSummary = $"{normalized.BitmapPixelFormat}/{normalized.BitmapAlphaMode}";
             lock (_frameGate)
             {
-                if (!ReferenceEquals(sender, _reader)) { normalized.Dispose(); return; }
+                if (!ReferenceEquals(session, _session) || !session.AcceptFrames || !ReferenceEquals(sender, session.Reader)) { normalized.Dispose(); return; }
                 // Ownership transfers to _latest; snapshots are copied under this same lock.
                 var old = _latest;
                 _latest = normalized;
@@ -255,13 +310,13 @@ public sealed class WinRtCameraService : ICameraService
                     $"normalized={formatSummary}; callback={timer.Elapsed.TotalMilliseconds:F2}ms");
             }
             _lastFrame = Environment.TickCount64;
-            _firstFrame?.TrySetResult(true);
+            session.FirstFrame.TrySetResult(true);
             _received++;
             long elapsed = Environment.TickCount64 - _windowStart;
             if (elapsed >= 5000)
             {
                 Volatile.Write(ref _fps, _received * 1000.0 / elapsed);
-                Log($"PERF acquired={_fps:F1}fps; submittedToImage={DisplayFps:F1}fps; droppedBusy={_dropped}; " +
+                Log($"PERF processed={_fps:F1}fps; submittedToImage={DisplayFps:F1}fps; droppedBusy={_dropped}; " +
                     $"lastCallback={timer.Elapsed.TotalMilliseconds:F2}ms; managedBytes={GC.GetTotalMemory(false)}");
                 _received = 0; _windowStart = Environment.TickCount64;
             }
@@ -269,8 +324,13 @@ public sealed class WinRtCameraService : ICameraService
         }
         catch (Exception ex)
         {
-            if (!_formatLogged) { _formatLogged = true; AppLog.Error("Frame normalization", ex); }
-            _firstFrame?.TrySetException(ex);
+            long now = Environment.TickCount64;
+            if (_lastFrameError == 0 || now - _lastFrameError >= 5000)
+            {
+                _lastFrameError = now;
+                AppLog.Error("Frame acquire/normalize/notify (rate limited to 5s)", ex);
+            }
+            session.FirstFrame.TrySetException(ex);
         }
         finally { Interlocked.Exchange(ref _callbackBusy, 0); }
     }
@@ -304,33 +364,76 @@ public sealed class WinRtCameraService : ICameraService
         try { await StopCoreAsync(); } finally { _lifecycle.Release(); }
     }
 
-    private async Task StopReaderAsync()
+    private async Task WaitForCallbackAsync()
     {
-        var reader = _reader; _reader = null;
+        while (Volatile.Read(ref _callbackBusy) != 0) await Task.Delay(10);
+    }
+
+    private async Task StopReaderAsync(CameraSession session)
+    {
+        var reader = session.Reader;
         if (reader is null) return;
+        lock (_frameGate) session.AcceptFrames = false;
         reader.FrameArrived -= OnFrameArrived;
-        try { await reader.StopAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
-        catch (Exception ex) { AppLog.Error("Stop frame reader", ex); }
+        // Keep ownership on a timeout. StopCoreAsync will wait for this same native task.
+        await session.Operations.RunAsync(() => session.StopTask ??= reader.StopAsync().AsTask(), TimeSpan.FromSeconds(5));
+        await WaitForCallbackAsync().WaitAsync(TimeSpan.FromSeconds(5));
         reader.Dispose();
+        session.Reader = null;
+        session.StopTask = null;
+        lock (_frameGate) { _latest?.Dispose(); _latest = null; }
+    }
+
+    private async Task ReleaseSessionAsync(CameraSession session)
+    {
+        if (session.FailedSubscribed) session.Capture.Failed -= CaptureFailed;
+        var reader = session.Reader; // Includes a reader returned AFTER the caller timed out.
+        if (reader is not null)
+        {
+            reader.FrameArrived -= OnFrameArrived;
+            try { await (session.StopTask ??= reader.StopAsync().AsTask()); }
+            catch (Exception ex) { AppLog.Error("Retired reader stop completed with failure", ex); }
+            await WaitForCallbackAsync();
+            reader.Dispose();
+        }
+        session.Capture.Dispose();
+        Log("Retired session: native operations settled; callbacks drained; resources released.");
     }
 
     private async Task StopCoreAsync()
     {
-        _running = false;
-        await StopReaderAsync();
-        if (_capture is not null) { _capture.Failed -= CaptureFailed; _capture.Dispose(); _capture = null; }
-        lock (_frameGate) { _latest?.Dispose(); _latest = null; }
+        CameraSession? session;
+        lock (_frameGate)
+        {
+            session = _session;
+            _session = null;
+            _running = false;
+            if (session is not null) session.AcceptFrames = false;
+            _latest?.Dispose(); _latest = null;
+        }
+        if (session is not null)
+            _cleanup = session.Operations.RetireAsync(() => ReleaseSessionAsync(session),
+                ex => AppLog.Error("Retired native operation completed with failure", ex));
         _fps = _displayFps = 0;
-        Log("Stop completed");
+        try { await _cleanup.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException)
+        {
+            Log("CLEANUP_DEFERRED: native task/callback is still running; resources retained and reconnect blocked.");
+        }
+        catch (Exception ex) { AppLog.Error("Session cleanup failed; reconnect blocked", ex); }
     }
 
     public void Dispose()
     {
-        // Normal window close must await StopAsync first. This fallback never blocks the UI thread.
-        _disposed = true; _running = false;
-        if (_reader is not null) { _reader.FrameArrived -= OnFrameArrived; _reader.Dispose(); _reader = null; }
-        if (_capture is not null) { _capture.Failed -= CaptureFailed; _capture.Dispose(); _capture = null; }
-        lock (_frameGate) { _latest?.Dispose(); _latest = null; }
+        RequireUI();
+        if (_disposed) return;
+        _disposed = true;
+        _ = DisposeCoreAsync();
+    }
+    private async Task DisposeCoreAsync()
+    {
+        try { await StopCoreAsync(); }
+        catch (Exception ex) { AppLog.Error("Dispose camera", ex); }
     }
 
     private static double Rate(MediaFrameFormat format) => format.FrameRate.Denominator == 0 ? 0 :

@@ -416,7 +416,11 @@ public sealed class AppSettings : ObservableObject, IDisposable
                 AppLog.Write("Settings saved: " + path, category: "Settings");
             }
             catch (Exception ex) { AppLog.Error("Save settings (last good file retained)", ex); }
-            finally { if (File.Exists(tmp)) File.Delete(tmp); }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); }
+                catch (Exception ex) { AppLog.Error("Remove settings temporary file", ex); }
+            }
         }
     }
 

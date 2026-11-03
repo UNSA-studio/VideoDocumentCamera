@@ -35,7 +35,7 @@ public sealed class RecordingService : IDisposable
 
     private const int MF_VERSION = 0x0002_0070;
 
-    private static readonly Guid MF_MT_MAJOR_TYPE = new("48EBA18E-F8C9-4687-BF11-0A74CD669FA8");
+    private static readonly Guid MF_MT_MAJOR_TYPE = new("48EBA18E-F8C9-4687-BF11-0A74C9F96A8F");
     private static readonly Guid MF_MT_SUBTYPE = new("F7E34C9A-42E8-4714-B74B-CB29D72C35E5");
     private static readonly Guid MF_MT_FRAME_SIZE = new("1652C33D-D6B2-4012-B834-72030849A37D");
     private static readonly Guid MF_MT_FRAME_RATE = new("C459A2E8-3D2C-4E44-B132-FEE5156C7BB0");
@@ -333,25 +333,33 @@ public sealed class RecordingService : IDisposable
         if (MFCreateMediaType(out var type) < 0 || type is null)
             throw new InvalidOperationException("MFCreateMediaType 失败");
 
+        try
+        {
         Guid major = MF_MT_MAJOR_TYPE, video = MFMediaType_Video;
         Guid sub = MF_MT_SUBTYPE, subValue = subType;
         Guid frameSizeKey = MF_MT_FRAME_SIZE;
         Guid frameRateKey = MF_MT_FRAME_RATE;
         Guid interlaceKey = MF_MT_INTERLACE_MODE;
 
-        type.SetGUID(ref major, ref video);
-        type.SetGUID(ref sub, ref subValue);
-        type.SetUINT64(ref frameSizeKey, ((ulong)(uint)width << 32) | (uint)height);
-        type.SetUINT64(ref frameRateKey, ((ulong)(uint)fps << 32) | 1);
-        type.SetUINT32(ref interlaceKey, MF_MT_INTERLACE_MODE_PROGRESSIVE);
+        Marshal.ThrowExceptionForHR(type.SetGUID(ref major, ref video));
+        Marshal.ThrowExceptionForHR(type.SetGUID(ref sub, ref subValue));
+        Marshal.ThrowExceptionForHR(type.SetUINT64(ref frameSizeKey, ((ulong)(uint)width << 32) | (uint)height));
+        Marshal.ThrowExceptionForHR(type.SetUINT64(ref frameRateKey, ((ulong)(uint)fps << 32) | 1));
+        Marshal.ThrowExceptionForHR(type.SetUINT32(ref interlaceKey, MF_MT_INTERLACE_MODE_PROGRESSIVE));
 
         if (bitrate > 0)
         {
             Guid bitrateKey = MF_MT_AVG_BITRATE;
-            type.SetUINT32(ref bitrateKey, (uint)bitrate);
+            Marshal.ThrowExceptionForHR(type.SetUINT32(ref bitrateKey, (uint)bitrate));
         }
 
         return type;
+        }
+        catch
+        {
+            Marshal.ReleaseComObject(type);
+            throw;
+        }
     }
 
     private static void Log(string message) => AppLog.Write(message, category: "Recording");

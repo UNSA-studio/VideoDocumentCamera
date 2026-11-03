@@ -7,6 +7,7 @@ static void Check(bool ok, string name)
     if (!ok) throw new Exception("FAIL " + name);
     Console.WriteLine("PASS " + name);
 }
+await NativeLifecycleTests.RunAsync();
 AppPaths.Initialize();
 string root = Path.Combine(AppPaths.Temp, "diagnostics-test-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
