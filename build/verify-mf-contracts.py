@@ -35,19 +35,19 @@ if args.update:
     all_ids = identifier_map(headers)
     required = set()
     for file in ['RecordingService.cs', 'CameraService.cs']:
-        text = (ROOT/'src/VideoPresenter.App/Services'/file).read_text()
+        text = (ROOT/'src/VideoPresenter.App/Services'/file).read_text(encoding='utf-8-sig')
         required.update(m[1] for m in re.finditer(r'Guid\s+(\w+)\s*=\s*new\("([0-9a-fA-F-]+)"\)', text) if m[1] in all_ids)
         required.update(m[2] for m in re.finditer(r'Guid\("([0-9a-fA-F-]+)"\).*?\binterface\s+(\w+)', text, re.S) if m[2] in all_ids)
     manifest={'sources':{name:{'url':URL+name, 'sha256':sha} for name,_,sha in headers},
               'identifiers':{key:all_ids[key] for key in sorted(required)}}
     MANIFEST.write_text(json.dumps(manifest, indent=2)+'\n')
 else:
-    manifest=json.loads(MANIFEST.read_text())
+    manifest=json.loads(MANIFEST.read_text(encoding='utf-8-sig'))
 identifiers=manifest['identifiers']
 errors=[]
 checked=0
 for file in ['RecordingService.cs', 'CameraService.cs']:
-    text=(ROOT/'src/VideoPresenter.App/Services'/file).read_text()
+    text=(ROOT/'src/VideoPresenter.App/Services'/file).read_text(encoding='utf-8-sig')
     declared=[(m[1],m[2]) for m in re.finditer(r'Guid\s+(\w+)\s*=\s*new\("([0-9a-fA-F-]+)"\)',text)]
     declared += [(m[2],m[1]) for m in re.finditer(r'Guid\("([0-9a-fA-F-]+)"\).*?\binterface\s+(\w+)',text,re.S)]
     for name,value in declared:
