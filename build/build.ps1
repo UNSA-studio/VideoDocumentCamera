@@ -393,7 +393,7 @@ Write-Host "✓ XAML 资源名校验通过（检查了 $($xamlFiles.Count) 个�
 # ═══════════════════════ 阶段 2：发布主程序 ═══════════════════════
 
 if ($doApp) {
-    Write-Step '② 发布主程序（WinUI 3 / 自包含 / ReadyToRun）'
+    Write-Step '② 发布主程序（WinUI 3 / 自包含 / 体积优先）'
 
     Assert-Command 'dotnet' '请安装 .NET 8 SDK（https://dot.net）'
 
@@ -416,10 +416,10 @@ if ($doApp) {
             -o $appOutDir `
             -p:Platform=x64 `
             -p:Version=$version `
-            -p:PublishReadyToRun=true `
+            -p:PublishReadyToRun=false `
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
-            -p:DebugType=portable `
+            -p:DebugType=embedded `
             -p:GenerateFullPaths=true `
             -v:n `
             --nologo 2>&1
@@ -462,6 +462,56 @@ if ($doApp) {
     }
     else {
         Write-Warning '  发布目录中没有启动器！桌面快捷方式将无法工作。请先执行 -Stage Launcher。'
+    }
+
+    # ── 代码混淆：发布产物就地混淆（Obfuscar）───────────────────────────
+    #   只改私有实现名、字符串常量与可内联方法体；XAML 绑定面、COM 接口、
+    #   设置持久化字段在 build\obfuscar.xml 中显式 Skip，避免白屏/绑定失效。
+    #   失败不阻断构建：混淆是加固手段，不该让能跑的包发不出去。
+    $obfConfig = Join-Path $PSScriptRoot 'obfuscar.xml'
+    if (Test-Path $obfConfig) {
+        Write-Host '  正在混淆私有实现（Obfuscar）…'
+        $obfTool = Join-Path $PSScriptRoot 'tools\obfuscar.console.exe'
+        if (-not (Test-Path $obfTool)) {
+            Push-Location $PSScriptRoot
+            try {
+                & dotnet tool install --tool-path (Join-Path $PSScriptRoot 'tools') Obfuscar.GlobalTool --version 2.2.50 2>&1 | Out-Null
+            } catch { }
+            finally { Pop-Location }
+            $obfTool = Join-Path $PSScriptRoot 'tools\obfuscar.console.exe'
+        }
+        if (Test-Path $obfTool) {
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                Push-Location $appOutDir
+                try {
+                    & $obfTool $obfConfig 2>&1 | ForEach-Object { Write-Host "    $_" }
+                    $obfExit = $LASTEXITCODE
+                }
+                finally { Pop-Location }
+
+                $obfOut = Join-Path $appOutDir 'obfuscated'
+                if ($obfExit -eq 0 -and (Test-Path (Join-Path $obfOut 'VideoPresenter.dll'))) {
+                    # 只替换两个自有程序集，第三方依赖/运行时原样保留
+                    foreach ($dll in @('VideoPresenter.dll', 'VideoPresenter.Shared.dll')) {
+                        $src = Join-Path $obfOut $dll
+                        if (Test-Path $src) { Copy-Item $src $appOutDir -Force }
+                    }
+                    Write-Host '  混淆完成：私有实现已改名并加固。' -ForegroundColor Green
+                }
+                else {
+                    Write-Warning "  混淆未产生输出（exit=$obfExit），保留未混淆的原始程序集。"
+                }
+                if (Test-Path $obfOut) { Remove-Item $obfOut -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+            finally {
+                $ErrorActionPreference = $prevEap
+            }
+        }
+        else {
+            Write-Warning '  未获取到 Obfuscar，跳过混淆。'
+        }
     }
 
     # ── 许可文件：随程序目录一起分发 ──────────────────────────────────────

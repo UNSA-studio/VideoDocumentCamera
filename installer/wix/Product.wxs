@@ -37,7 +37,8 @@
         <!-- 升级策略：同版本可覆盖安装；降级给出明确提示 -->
         <MajorUpgrade DowngradeErrorMessage="已安装更高版本的「视频展台」，请先卸载后再安装当前版本。"
                       AllowSameVersionUpgrades="yes"/>
-        <MediaTemplate EmbedCab="yes"/>
+        <!-- high 压缩：默认的 mszip 对 52MB 级 payload 体积浪费明显 -->
+        <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
 
         <!-- ══════════ 安装界面 ══════════
 

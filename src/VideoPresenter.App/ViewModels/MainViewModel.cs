@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+﻿// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (C) 2026 UNSA Studio
 //
 // 本文件属于视频展台（VideoPresenter）。分发时请随文件一并提供许可条款：
@@ -159,8 +159,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>"未连接"引导层可见性。</summary>
-    public Visibility PreviewHintVisibility => _isPreviewing ? Visibility.Collapsed : Visibility.Visible;
+    private bool _isSwitching;
+    /// <summary>
+    /// 是否处于"切换设备"过渡期。
+    /// 切换时中间必然有一小段既没旧画面也没新画面的空档，
+    /// 若不区分这一段，就会先闪一下"未连接视频展台"再跳回新画面。
+    /// </summary>
+    public bool IsSwitching
+    {
+        get => _isSwitching;
+        private set
+        {
+            if (!SetProperty(ref _isSwitching, value)) return;
+            OnPropertyChanged(nameof(PreviewHintVisibility));
+        }
+    }
+
+    /// <summary>"未连接"引导层可见性（切换过渡期保持隐藏）。</summary>
+    public Visibility PreviewHintVisibility => (_isPreviewing || _isSwitching) ? Visibility.Collapsed : Visibility.Visible;
 
     /// <summary>实时画面层可见性。</summary>
     public Visibility PreviewVisibility => _isPreviewing ? Visibility.Visible : Visibility.Collapsed;
@@ -406,7 +422,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         else if (_camera is Services.WinRtCameraService winrt)
         {
-            FpsText = $"处理 {_camera.Fps:F0} / 提交 {winrt.DisplayFps:F0} fps";
+            FpsText = $"采集 {_camera.Fps:F0} / 提交 {winrt.DisplayFps:F0} fps";
         }
         else
         {
@@ -469,6 +485,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _switchCts?.Cancel();
         var cancellation = new CancellationTokenSource();
         _switchCts = cancellation;
+        IsSwitching = true;   // 过渡期：抑制"未连接"引导层
         IsPreviewing = false;
         StatusText = "正在连接：" + device.Name + "（界面仍可操作）";
         try
@@ -487,7 +504,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            if (_switchCts == cancellation) _switchCts = null;
+            // 只由"当前这一次"切换负责收尾：连续切设备时，
+            // 旧任务的 finally 不能把新任务刚设上的过渡期标志清掉。
+            if (_switchCts == cancellation)
+            {
+                _switchCts = null;
+                IsSwitching = false;
+            }
             cancellation.Dispose();
         }
     }
@@ -563,7 +586,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (!string.IsNullOrEmpty(await SaveCurrentFrameAsync())) succeeded++;
             await Task.Delay(130);
         }
-        StatusText = $"连拍结束：成功 {succeeded}/{count} 张";
+        StatusText = $"连拍完成（{count} 张）";
     }
 
     private async Task<string> SaveCurrentFrameAsync()

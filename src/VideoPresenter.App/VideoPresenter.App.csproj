@@ -42,17 +42,26 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
-  <!-- ══════════ 启动性能（i3-6 代"1 秒内可见"）══════════ -->
+  <!-- ══════════ 体积与启动权衡（Release）══════════
+       实测结论：
+         · PublishReadyToRun 会让 publish 输出接近翻倍（52MB 安装包的主要来源之一），
+           而本项目启动主要瓶颈是 WinAppSDK 初始化，R2R 收益有限，
+           因此关闭，改用 TieredPGO + QuickJit 保住冷启动速度。
+         · DebugSymbols 只保留 pdb 供 CI 归档，不进入安装包。
+      仍保留 SelfContained / WindowsAppSDKSelfContained：
+        「装完即用、不要求用户预装 .NET 或 WinAppSDK 运行时」是这个项目的底线。 -->
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
-    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRun>false</PublishReadyToRun>
     <TieredCompilation>true</TieredCompilation>
     <TieredCompilationQuickJit>true</TieredCompilationQuickJit>
     <TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
     <TieredPGO>true</TieredPGO>
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
-    <DebugType>portable</DebugType>
-    <DebugSymbols>true</DebugSymbols>
+    <DebugType>embedded</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>

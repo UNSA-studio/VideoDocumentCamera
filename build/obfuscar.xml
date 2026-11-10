@@ -1,0 +1,60 @@
+<?xml version='1.0'?>
+<!--
+  视频展台 Obfuscar 配置（发布后混淆，仅作用于 VideoPresenter.dll / VideoPresenter.Shared.dll）
+
+  设计原则：「能混淆的都混淆，会破坏功能的一律放过」
+  ─────────────────────────────────────────────────────────
+  WinUI 3 有几条硬约束，踩了就白屏或事件全失效，因此必须保留：
+
+  1. x:Bind 绑定的类型与成员
+     XAML 编译期会生成代码直接引用 ViewModel 的属性 / 方法 / 事件，
+     属性名被改名后生成代码仍指向旧名 → 运行时 NullReference 或绑定静默失效。
+  2. 数据模板 x:DataType 对应的类型名
+  3. 任何被 Reflection 按名访问的成员（设置项、枚举名持久化）
+  4. P/Invoke / COM 互操作声明（DllImport 的 EntryPoint、ComImport 接口方法序）
+  5. 序列化到磁盘的字段名（Settings 用 JSON，字段名即磁盘格式）
+
+  因此策略是：KeepPublicApi + 只混淆 private/internal 实现细节，
+  并显式 SkipType / SkipMethod 把 XAML 可见面全量列出。
+-->
+<Obfuscator>
+  <Var name="InPath" value="." />
+  <Var name="OutPath" value=".\obfuscated" />
+  <Var name="KeepPublicApi" value="true" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="RenameProperties" value="true" />
+  <Var name="RenameEvents" value="true" />
+  <Var name="RenameFields" value="true" />
+  <Var name="UseUnicodeNames" value="false" />
+  <Var name="HideStrings" value="true" />
+  <Var name="OptimizeMethods" value="true" />
+  <Var name="SuppressIldasm" value="true" />
+  <Var name="RegenerateDebugInfo" value="false" />
+
+  <Module file="$(InPath)\VideoPresenter.dll">
+    <!-- ── XAML 可见面：一律不改名 ── -->
+    <SkipType name="VideoPresenter.App.ViewModels.*" />
+    <SkipType name="VideoPresenter.App.MainWindow" />
+    <SkipType name="VideoPresenter.App.App" />
+    <SkipType name="VideoPresenter.App.Services.SnapshotItem" />
+    <SkipType name="VideoPresenter.App.Services.CameraDevice" />
+    <SkipType name="VideoPresenter.App.Converters.*" />
+    <SkipType name="VideoPresenter.App.Models.*" />
+
+    <!-- ── COM / P/Invoke：vtable 顺序与 EntryPoint 不能动 ── -->
+    <SkipType name="VideoPresenter.App.Services.RecordingService" />
+    <SkipType name="VideoPresenter.App.Services.WinRtCameraService" />
+    <SkipMethod type="VideoPresenter.App.Services.*" name="*" attrib="public" />
+
+    <!-- ── 按名反射访问的成员 ── -->
+    <SkipMethod type="VideoPresenter.App.Services.AppSettings" name="*" />
+    <SkipType name="VideoPresenter.App.Services.AppSettings" />
+
+    <!-- ── 枚举值参与磁盘持久化，改名会丢设置 ── -->
+    <SkipType name="VideoPresenter.App.*Enum*" />
+  </Module>
+
+  <Module file="$(InPath)\VideoPresenter.Shared.dll">
+    <SkipType name="VideoPresenter.Shared.*" />
+  </Module>
+</Obfuscator>

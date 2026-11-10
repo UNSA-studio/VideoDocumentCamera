@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+﻿// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (C) 2026 UNSA Studio
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -97,7 +97,7 @@ public sealed class WinRtCameraService : ICameraService
         if (!_cleanup.IsCompletedSuccessfully)
             throw new InvalidOperationException(_cleanup.IsCompleted
                 ? "上一次设备清理失败，禁止复用；请重启应用并保留日志。"
-                : "上一次驱动操作尚未结束，禁止重叠打开；请稍后重试或重新插拔设备。");
+                : "上一次驱动初始化仍未返回；请稍后重试或重新插拔设备。");
     }
 
     public async Task<bool> StartAsync(CameraDevice device, CancellationToken cancellationToken = default)
@@ -222,7 +222,7 @@ public sealed class WinRtCameraService : ICameraService
                             if (session.Failure is not null) throw session.Failure;
                             _running = true;
                         }
-                        DiagnosticsText = $"已收到规范化视频帧：{device.Name}；尚需确认界面显示";
+                        DiagnosticsText = $"已收到可显示帧：{device.Name}；输出 BGRA8/Premultiplied";
                         StatusChanged?.Invoke(this, DiagnosticsText);
                         Log($"Connect END first normalized frame verified; elapsed={clock.ElapsedMilliseconds}ms");
                         return true;
