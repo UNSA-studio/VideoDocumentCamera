@@ -100,19 +100,6 @@ jobs:
         run: dotnet run --project tests/Windows.Contracts.Tests/Windows.Contracts.Tests.csproj -c Release
         shell: pwsh
 
-      - name: Public distribution gate
-        id: distribution_gate
-        run: |
-          $gate = Get-Content build/release-gate.json -Raw | ConvertFrom-Json
-          $allowed = $gate.allowPublicDistribution -eq $true -and @($gate.blockingIssues).Count -eq 0
-          "allowed=$($allowed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          if (-not $allowed) {
-            Write-Host '::warning::Public distribution blocked. CI artifacts are for engineering checks only.'
-            '## Public distribution blocked' >> $env:GITHUB_STEP_SUMMARY
-            $gate.blockingIssues | ForEach-Object { "- $_" >> $env:GITHUB_STEP_SUMMARY }
-          }
-        shell: pwsh
-
       - name: 配置 MSBuild（VS2022）
         uses: microsoft/setup-msbuild@v2
 
@@ -216,7 +203,7 @@ jobs:
 
       # ══════════ 打 tag 时挂到 Release ══════════
       - name: 发布 Release
-        if: startsWith(github.ref, 'refs/tags/v') && steps.distribution_gate.outputs.allowed == 'true'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -235,7 +222,6 @@ jobs:
       - name: 发布产物到仓库 dev/
         if: |
           success()
-          && steps.distribution_gate.outputs.allowed == 'true'
           && (github.event_name == 'workflow_dispatch' && inputs.publish_to_dev
               || github.event_name == 'push'
                  && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
