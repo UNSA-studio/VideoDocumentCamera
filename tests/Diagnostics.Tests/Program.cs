@@ -16,6 +16,10 @@ try
     Check(AppPaths.IsInsideUsers(AppPaths.Photos), "photos beneath Users");
     Check(!AppPaths.IsInsideUsers(Path.GetFullPath(Path.Combine(AppPaths.UsersRoot, "..", "outside"))), "reject traversal");
     Check(!AppPaths.IsInsideUsers(AppPaths.UsersRoot + "-other/test"), "reject sibling prefix");
+    // 数据根目录必须可用；回退发生时必须留下可读的原因，不能静默改位置
+    Check(Directory.Exists(AppPaths.UsersRoot), "users root exists");
+    Check(AppPaths.IsPortable || AppPaths.FallbackReason is not null, "fallback is explained");
+    Check(AppPaths.DescribeLayout().Length > 0, "layout is describable");
     string logs = Path.Combine(root, "Logs");
     Directory.CreateDirectory(logs);
     File.WriteAllText(Path.Combine(logs, "2026-09-01.log"), "test α 一\n");

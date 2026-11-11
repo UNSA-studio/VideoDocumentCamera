@@ -25,11 +25,29 @@ public partial class App : Application
 
     public App()
     {
-        try { AppLog.Initialize(); }
+        try
+        {
+            AppPaths.Initialize();
+            AppLog.Initialize();
+            if (AppPaths.FallbackReason is not null)
+            {
+                AppLog.Write("[VP] 数据目录回退：" + AppPaths.DescribeLayout(), "WARN", "Paths");
+                ShowDataDirNotice();
+            }
+            else
+            {
+                AppLog.Write("[VP] " + AppPaths.DescribeLayout(), "INFO", "Paths");
+            }
+        }
         catch (Exception ex)
         {
-            ShowFatalError(new IOException("无法写入应用目录下的 Users：" + AppPaths.UsersRoot +
-                "。请重新安装以修复该数据目录权限，或把便携版放到可写目录；不会悄悄写入 C 盘。", ex));
+            ShowFatalError(new IOException(
+                "无法在以下任一位置创建数据目录：\n" +
+                "  ① " + Path.Combine(AppPaths.InstallRoot, "Users") + "（安装目录，可能没有写权限）\n" +
+                "  ② " + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                                        "UNSA Studio", "VideoDocumentCamera", "Data", "Users") + "\n" +
+                "  ③ " + Path.Combine(Path.GetTempPath(), "VideoDocumentCamera", "Users") + "\n" +
+                "请把程序放到你有写权限的目录，或用安装包正常安装后重试。", ex));
             throw;
         }
         UnhandledException += (_, e) =>
@@ -97,6 +115,22 @@ public partial class App : Application
             (ex.StackTrace ?? "(无调用栈)");
 
         MessageBoxW(IntPtr.Zero, text, "视频展台 · 启动失败", 0x00000010 /* MB_ICONERROR */);
+    }
+
+    /// <summary>
+    /// 数据目录回退时的提示。不是错误——程序照常可用，
+    /// 只是要明确告诉用户文件落在哪里，免得找不到照片和日志。
+    /// </summary>
+    private static void ShowDataDirNotice()
+    {
+        string text =
+            "安装目录不可写，已自动改用用户数据目录。\n\n" +
+            "数据位置：" + AppPaths.UsersRoot + "\n" +
+            "原因：" + AppPaths.FallbackReason + "\n\n" +
+            "程序可正常使用，照片、扫描件、录像与日志都保存在上述位置。\n" +
+            "若希望数据跟随程序目录，请把程序安装到你有写权限的文件夹。";
+
+        MessageBoxW(IntPtr.Zero, text, "视频展台 · 数据目录已切换", 0x00000040 /* MB_ICONINFORMATION */);
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
