@@ -13,17 +13,17 @@
 ---
 
 * 构建时间：
-2026-11-10 17:15:24
+2026-11-11 04:49:44
  UTC
 * 源码提交：`
-c8d97a51b18456aca3229ad1506a274d2a5823df
+e1366dc148d99434bbeef596d7d10b7621d62512
 `
 * 流水线：
 https://github.com
 /
 UNSA-studio/VideoDocumentCamera
 /actions/runs/
-42862270349
+42961420882
 
 > 需要历史版本或更小的分发体积，请使用 **Releases** 页面；
 > 需要便携版（解压即用）请到 Actions 的 Artifacts 下载。
