@@ -586,7 +586,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (!string.IsNullOrEmpty(await SaveCurrentFrameAsync())) succeeded++;
             await Task.Delay(130);
         }
-        StatusText = $"连拍完成（{count} 张）";
+        // 报告真实成功数：中间有帧拿不到时，"N 张"会骗用户以为全存上了
+        StatusText = succeeded == count
+            ? $"连拍完成（{count} 张）"
+            : $"连拍结束：成功 {succeeded}/{count} 张";
     }
 
     private async Task<string> SaveCurrentFrameAsync()
