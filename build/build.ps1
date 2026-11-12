@@ -44,7 +44,9 @@ param(
     [string]$Sign = '',
     [string]$SignPassword = '',
     [switch]$SkipIcon,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    # 代码混淆默认关闭：混淆后必须先在真实 Windows 上验证能启动、XAML 绑定有效。
+    [switch]$Obfuscate
 )
 
 Set-StrictMode -Version Latest
@@ -464,12 +466,16 @@ if ($doApp) {
         Write-Warning '  发布目录中没有启动器！桌面快捷方式将无法工作。请先执行 -Stage Launcher。'
     }
 
-    # ── 代码混淆：发布产物就地混淆（Obfuscar）───────────────────────────
-    #   只改私有实现名、字符串常量与可内联方法体；XAML 绑定面、COM 接口、
-    #   设置持久化字段在 build\obfuscar.xml 中显式 Skip，避免白屏/绑定失效。
-    #   失败不阻断构建：混淆是加固手段，不该让能跑的包发不出去。
+    # ── 代码混淆（默认关闭，显式开关才启用）─────────────────────────────
+    #   2026-11-12 起默认关闭：疑似混淆破坏启动，需先在真实 Windows 上验证
+    #   （管理员启动也报错，已排除权限因素）。验证通过后用
+    #     build.ps1 -Stage App -Obfuscate
+    #   再启用。配置见 build\obfuscar.xml。
     $obfConfig = Join-Path $PSScriptRoot 'obfuscar.xml'
-    if (Test-Path $obfConfig) {
+    if (-not $Obfuscate) {
+        Write-Host '  跳过代码混淆（默认关闭；如需启用请加 -Obfuscate）。'
+    }
+    elseif (Test-Path $obfConfig) {
         Write-Host '  正在混淆私有实现（Obfuscar）…'
         $obfTool = Join-Path $PSScriptRoot 'tools\obfuscar.console.exe'
         if (-not (Test-Path $obfTool)) {
