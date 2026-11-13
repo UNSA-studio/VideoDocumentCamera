@@ -26,7 +26,17 @@
   <Var name="RenameEvents" value="true" />
   <Var name="RenameFields" value="true" />
   <Var name="UseUnicodeNames" value="false" />
-  <Var name="HideStrings" value="true" />
+  <!--
+    ⚠ 2026-11-12 事故记录：HideStrings=true 曾导致程序启动即报
+    "无法写入应用目录下的 Users"。混淆器把 AppPaths 里的路径字面量加密，
+    静态构造阶段解密失败 → 可写性探针在真实可写的目录上返回"不可写" →
+    被误判成权限问题，排查了三轮（连管理员启动都失败才发现不对）。
+    该故障与 ACL / 完整性级别完全无关。
+
+    因此这里永久关闭字符串加密，并保持 AppPaths / AppLog 整体 Skip。
+    混淆只能做"改名"这种低风险动作；凡涉及常量重写都不得启用。
+  -->
+  <Var name="HideStrings" value="false" />
   <Var name="OptimizeMethods" value="true" />
   <Var name="SuppressIldasm" value="true" />
   <Var name="RegenerateDebugInfo" value="false" />

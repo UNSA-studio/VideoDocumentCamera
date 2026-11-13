@@ -10,10 +10,15 @@ namespace VideoPresenter.App.Services;
 ///
 /// 布局约定（便携优先，但绝不因为只读而启动失败）：
 ///   ① 安装目录可写 → &lt;安装目录&gt;\Users —— 数据跟着程序走，整目录拷走即完整
-///   ② 安装目录只读（装在 Program Files、组策略收紧 ACL、只读介质）
+///   ② 安装目录确实写不进去（只读介质、组策略收紧 ACL、被其他程序占用）
 ///      → %LOCALAPPDATA%\UNSA Studio\VideoDocumentCamera\Data\Users
 ///   ③ 连用户配置目录也写不了（极端情况）
 ///      → %TEMP%\VideoDocumentCamera\Users
+///
+/// ⚠ 历史教训（2026-11-12）：不要把"装在 Program Files"当成不可写的判据。
+///   实测 D:\Program Files 下普通用户照样可写，而且当时那次"不可写"是
+///   Obfuscar 混淆改坏了本文件的路径字面量导致的误报。
+///   因此这里唯一可信的判据是 CanWrite() 的真实探针写入，不看路径猜。
 ///
 /// 回退不静默：<see cref="FallbackReason"/> 非空时启动会写 WARN 日志，
 /// 设置页展示真实数据目录，用户自己能找到文件。
