@@ -111,12 +111,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ClearSnapshotsCommand = new RelayCommand(ClearSnapshots, () => Snapshots.Count > 0);
         OpenFolderCommand = new RelayCommand(OpenSnapshotFolder);
         ToggleRightPanelCommand = new RelayCommand(() => IsRightPanelOpen = !IsRightPanelOpen);
-        ToggleFullScreenCommand = new RelayCommand(() => FullScreenRequested?.Invoke(this, !_isFullScreen));
         ToggleTopmostCommand = new RelayCommand(() => IsTopmost = !IsTopmost);
     }
 
-    /// <summary>窗口级动作（全屏）交由 View 处理。</summary>
-    public event EventHandler<bool>? FullScreenRequested;
+    /// <summary>窗口级动作由 View 负责（本类不再承载全屏请求）。</summary>
+    // 全屏事件已移除：程序恒定全屏，窗口模态由 MainWindow 在首帧后自行确定。
 
     // ───────────────────────── 集合与状态 ─────────────────────────
 
@@ -392,7 +391,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand ClearSnapshotsCommand { get; }
     public ICommand OpenFolderCommand { get; }
     public ICommand ToggleRightPanelCommand { get; }
-    public ICommand ToggleFullScreenCommand { get; }
     public ICommand ToggleTopmostCommand { get; }
 
     // ───────────────────────── 设备与预览 ─────────────────────────

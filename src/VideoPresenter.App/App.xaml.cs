@@ -29,6 +29,12 @@ public partial class App : Application
         {
             AppPaths.Initialize();
             AppLog.Initialize();
+            // 迁移提示优先展示：用户最关心的是"我的照片去哪了"
+            if (AppPaths.MigrationNote is not null)
+            {
+                AppLog.Write("[VP] " + AppPaths.MigrationNote, "INFO", "Paths");
+                ShowMigrationNotice();
+            }
             if (AppPaths.FallbackReason is not null)
             {
                 AppLog.Write("[VP] 数据目录回退：" + AppPaths.DescribeLayout(), "WARN", "Paths");
@@ -115,6 +121,19 @@ public partial class App : Application
             (ex.StackTrace ?? "(无调用栈)");
 
         MessageBoxW(IntPtr.Zero, text, "视频展台 · 启动失败", 0x00000010 /* MB_ICONERROR */);
+    }
+
+    /// <summary>
+    /// 旧数据迁移提示。只在真的搬过东西时弹出，说明搬了什么、从哪搬到哪。
+    /// </summary>
+    private static void ShowMigrationNotice()
+    {
+        string text =
+            "检测到你之前的数据保存在另一个位置，已自动复制到当前数据目录。\n\n" +
+            AppPaths.MigrationNote + "\n\n" +
+            "旧位置的文件没有删除，你可以自行核对后再清理。";
+
+        MessageBoxW(IntPtr.Zero, text, "视频展台 · 已恢复旧数据", 0x00000040 /* MB_ICONINFORMATION */);
     }
 
     /// <summary>

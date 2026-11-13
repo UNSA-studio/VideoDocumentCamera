@@ -54,7 +54,14 @@ public sealed class AppSettings : ObservableObject, IDisposable
     // ───────────────────────── 常规 ─────────────────────────
 
     private bool _startFullScreen = true;
-    /// <summary>启动后自动进入全屏。</summary>
+    /// <summary>
+    /// 启动后自动进入全屏。
+    /// </summary>
+    /// <remarks>
+    /// 2026-11-13 起程序恒定全屏，本设置不再作用于任何 UI（设置页已移除该项）。
+    /// 属性保留只为兼容旧 settings.json —— 删掉会让老用户文件里这一项变成
+    /// 未知字段，某些序列化配置下会导致整份设置读取失败。
+    /// </remarks>
     public bool StartFullScreen
     {
         get => _startFullScreen;

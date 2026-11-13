@@ -81,7 +81,7 @@ public sealed partial class MainWindow : Window
         RootGrid.ActualThemeChanged += OnActualThemeChanged;
 
         Vm.PropertyChanged += OnViewModelPropertyChanged;
-        Vm.FullScreenRequested += (_, on) => SetFullScreen(on);
+        // 全屏不再由 ViewModel 请求 —— 程序恒定全屏，见 SetFullScreen。
 
         _camera.FrameAvailable += OnFrameAvailable;
 
@@ -247,8 +247,8 @@ public sealed partial class MainWindow : Window
         //   而不是先看到一个 1180×760 的小窗再"啪"地跳成全屏。
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            // 是否全屏由设置决定（默认开）
-            if (Vm.Settings.StartFullScreen) SetFullScreen(true);
+            // 恒定全屏：不再受设置控制（旧 settings.json 里的 StartFullScreen 仅作兼容保留）
+            SetFullScreen(true);
 
             // 把存放在设置里的开关同步到实际状态（注册表 / 辅助线 / 状态栏与工具栏位置）
             ApplyGuides();
@@ -283,7 +283,11 @@ public sealed partial class MainWindow : Window
                     return IntPtr.Zero;
 
                 case WindowApiService.HotKeyFullScreen:
-                    SetFullScreen(!_isFullScreen);
+                    // Ctrl+Alt+F 现在用于复位画面缩放：
+                    // 恒定全屏后"切换全屏"没有意义，但这个热键用户已经记住了，
+                    // 留着当"一键回到原样"比直接作废更符合直觉。
+                    ResetPreviewTransform();
+                    Vm.SetStatus("画面已复位");
                     return IntPtr.Zero;
             }
         }
@@ -295,21 +299,20 @@ public sealed partial class MainWindow : Window
         //   弹出按键提示气泡；而它注册在 RootGrid 上会覆盖整个窗口 ——
         //   表现就是"指针移到画面区域就冒出一个 Esc 键盘帽"。
         //   窗口消息没有任何视觉副作用。
+        // 本应用恒定全屏，Esc / F11 不再切换窗口形态：
+        //   Esc —— 优先关设置浮层；否则复位画面缩放（放大后想退回原状最顺手）
+        //   F11 —— 保留空实现（老用户肌肉记忆里按了不该有反应，也不该退出）
         if (uMsg == 0x0100 /* WM_KEYDOWN */)
         {
             int vk = wParam.ToInt32();
-
             if (vk == 0x1B /* VK_ESCAPE */)
             {
-                // 设置浮层开着 → 先关浮层；否则切换全屏
                 if (_settingsOpen) { HideSettings(); return IntPtr.Zero; }
-                SetFullScreen(!_isFullScreen);
+                ResetPreviewTransform();
                 return IntPtr.Zero;
             }
-
             if (vk == 0x7A /* VK_F11 */)
             {
-                SetFullScreen(!_isFullScreen);
                 return IntPtr.Zero;
             }
         }
@@ -490,6 +493,15 @@ public sealed partial class MainWindow : Window
         AnnotationCanvas.Visibility = Visibility.Visible;
         AnnotationCanvas.IsHitTestVisible = on;
         AnnotationToolbar.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+
+        // 批注开启时把手势交给批注层：ManipulationMode=None 后，
+        // 预览容器的捏合/拖动不再抢事件，画笔可以连续画不被"缩放"打断。
+        // 关闭批注时恢复 缩放 + 平移，双指捏合立刻可用。
+        // 注意要显式列出，别用 System —— System 含 Rotate，两指稍一打角度
+        // 画面就会跟着旋转，展台场景里那是纯粹的误触。
+        PreviewContainer.ManipulationMode = on
+            ? ManipulationModes.None
+            : ManipulationModes.Scale | ManipulationModes.TranslateX | ManipulationModes.TranslateY;
 
         if (!on) EndStroke(null);
     }
@@ -1371,32 +1383,131 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // ══════════════════════ 画面缩放 / 平移 ══════════════════════
+// ══════════════════════ 画面缩放 / 平移 ══════════════════════
     //
     // 对标希沃的"画面缩放、移动"：老师看试卷细节、比对笔迹时要用。
     // 变换加在整个预览容器上（画面 + 批注一起走），保证批注不错位。
-
+    //
+    // 三种输入统一走 ApplyZoom(centerX, centerY, factor)：
+    //   ① 触摸双指捏合（ManipulationDelta.Scale）—— 一体机触屏的主要用法
+    //   ② 鼠标滚轮 —— 桌面有鼠标时用
+    //   ③ 双击复位
+    // 缩放锚点取"捏合中心 / 指针位置"，不是容器中心 —— 否则放大时画面会
+    // 从手指下面跑掉，用户感觉"拉大没用"。
     private double _zoom = 1.0;
     private bool _panning;
     private Windows.Foundation.Point _panStart;
     private double _panOriginX, _panOriginY;
-
+    private bool _manipulating;
+    private double _manipAccumScale = 1.0;
     private const double MinZoom = 0.5;
-    private const double MaxZoom = 8.0;
+    private const double MaxZoom = 12.0;
 
-    /// <summary>滚轮缩放（以容器中心为基准）。</summary>
-    private void Preview_WheelChanged(object sender, PointerRoutedEventArgs e)
+    /// <summary>
+    /// 以容器内坐标 (centerX, centerY) 为锚点缩放 factor 倍。
+    /// 锚点在缩放前后保持不动（手指按住的点不跑）。
+    /// </summary>
+    private void ApplyZoom(double centerX, double centerY, double factor)
     {
-        var pt = e.GetCurrentPoint(PreviewContainer);
-        int delta = pt.Properties.MouseWheelDelta;
+        if (PreviewContainer.ActualWidth <= 0 || PreviewContainer.ActualHeight <= 0) return;
 
-        double factor = delta > 0 ? 1.15 : 1 / 1.15;
         double next = Math.Clamp(_zoom * factor, MinZoom, MaxZoom);
-        if (Math.Abs(next - _zoom) < 0.0001) return;
+        if (Math.Abs(next - _zoom) < 0.0005) return;
+
+        // 锚点相对原点（渲染原点在容器中心）的偏移
+        double ox = centerX - PreviewContainer.ActualWidth / 2;
+        double oy = centerY - PreviewContainer.ActualHeight / 2;
+
+        // 保持锚点不动：translate' = center - (center - translate) * (next/zoom)
+        double ratio = next / _zoom;
+        PreviewTranslate.X = ox - (ox - PreviewTranslate.X) * ratio;
+        PreviewTranslate.Y = oy - (oy - PreviewTranslate.Y) * ratio;
 
         _zoom = next;
         PreviewScale.ScaleX = _zoom;
         PreviewScale.ScaleY = _zoom;
+        ClampTranslation();
+    }
+
+    /// <summary>
+    /// 平移边界：不让画面被拖出可视区（留 20% 余量）。
+    /// 没有这个，用户能把画面拖到完全看不见，以为程序坏了。
+    /// </summary>
+    private void ClampTranslation()
+    {
+        double w = PreviewContainer.ActualWidth, h = PreviewContainer.ActualHeight;
+        if (w <= 0 || h <= 0) return;
+
+        // 放大后的内容半宽；_zoom<=1 时内容不超出容器，平移应被限制在 0
+        double halfW = Math.Max(0, (w * _zoom - w) / 2);
+        double halfH = Math.Max(0, (h * _zoom - h) / 2);
+
+        double limitX = halfW + w * 0.2;
+        double limitY = halfH + h * 0.2;
+
+        PreviewTranslate.X = Math.Clamp(PreviewTranslate.X, -limitX, limitX);
+        PreviewTranslate.Y = Math.Clamp(PreviewTranslate.Y, -limitY, limitY);
+    }
+
+    /// <summary>触摸双指捏合开始：记下当前累计缩放。</summary>
+    private void Preview_ManipulationStarted(object sender, ManipulationStartedRoutedEventArgs e)
+    {
+        _manipulating = true;
+        _manipAccumScale = 1.0;
+        // 注：这里【不】动批注模式。批注开启时 ManipulationMode 已被
+        // SetAnnotationMode 设成 None，手势根本不会进来；反过来在手势里
+        // 关批注，会让老师一捏就丢掉画笔状态，反而是 bug。
+    }
+
+    /// <summary>
+    /// 触摸捏合 / 拖动。
+    ///
+    /// ManipulationDelta 的 Scale 是【相对上一次】的增量，所以要逐次累乘，
+    /// 而不是拿它当绝对倍数 —— 这是 WinUI 手势的常见坑。
+    /// </summary>
+    private void Preview_ManipulationDelta(object sender, ManipulationDeltaRoutedEventArgs e)
+    {
+        // 事件顺序异常时（例如手势被系统取消后仍收到 Delta）直接忽略，
+        // 避免把残留增量叠加到已经复位过的变换上。
+        if (!_manipulating) return;
+
+        var d = e.Delta;
+
+        if (Math.Abs(d.Scale - 1.0) > 0.0001)
+        {
+            var p = e.Position;
+            ApplyZoom(p.X, p.Y, d.Scale);
+            _manipAccumScale *= d.Scale;
+        }
+
+        if (Math.Abs(d.Translation.X) > 0.01 || Math.Abs(d.Translation.Y) > 0.01)
+        {
+            PreviewTranslate.X += d.Translation.X;
+            PreviewTranslate.Y += d.Translation.Y;
+            ClampTranslation();
+        }
+
+        e.Handled = true;
+    }
+
+    /// <summary>捏合结束：刷新状态栏提示。</summary>
+    private void Preview_ManipulationCompleted(object sender, ManipulationCompletedRoutedEventArgs e)
+    {
+        _manipulating = false;
+        if (Math.Abs(_manipAccumScale - 1.0) > 0.02)
+        {
+            Vm.SetStatus($"画面缩放 {_zoom * 100:F0}%（双击复位）");
+        }
+        _manipAccumScale = 1.0;
+    }
+
+    /// <summary>滚轮缩放（以指针位置为锚点）。</summary>
+    private void Preview_WheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(PreviewContainer);
+        int delta = pt.Properties.MouseWheelDelta;
+        double factor = delta > 0 ? 1.15 : 1 / 1.15;
+        ApplyZoom(pt.Position.X, pt.Position.Y, factor);
         Vm.SetStatus($"画面缩放 {_zoom * 100:F0}%（双击复位）");
         e.Handled = true;
     }
@@ -1405,13 +1516,10 @@ public sealed partial class MainWindow : Window
     private void Preview_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var pt = e.GetCurrentPoint(PreviewContainer);
-
         bool middle = pt.Properties.IsMiddleButtonPressed;
         bool right = pt.Properties.IsRightButtonPressed;
-
         // 左键留给批注，这里只响应中键 / 右键
         if (!middle && !right) return;
-
         _panning = true;
         _panStart = pt.Position;
         _panOriginX = PreviewTranslate.X;
@@ -1420,39 +1528,44 @@ public sealed partial class MainWindow : Window
         try { PreviewContainer.CapturePointer(e.Pointer); } catch { /* 忽略 */ }
         e.Handled = true;
     }
-
     private void Preview_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (!_panning) return;
-
         var pt = e.GetCurrentPoint(PreviewContainer);
         PreviewTranslate.X = _panOriginX + (pt.Position.X - _panStart.X);
         PreviewTranslate.Y = _panOriginY + (pt.Position.Y - _panStart.Y);
+        ClampTranslation();
         e.Handled = true;
     }
-
     private void Preview_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
         if (!_panning) return;
-
         _panning = false;
         try { PreviewContainer.ReleasePointerCapture(e.Pointer); } catch { /* 忽略 */ }
         e.Handled = true;
     }
-
     /// <summary>双击复位缩放与平移。</summary>
     private void Preview_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        ResetPreviewTransform();
+        Vm.SetStatus("画面已复位");
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// 复位画面变换（缩放 100%、平移归零）。
+    /// 双击预览区、按 Esc 都走这里 —— 老师放大看完某一段后，
+    /// 需要一个"立刻回到原状"的动作，两个入口都留给它。
+    /// </summary>
+    private void ResetPreviewTransform()
     {
         _zoom = 1.0;
         PreviewScale.ScaleX = 1;
         PreviewScale.ScaleY = 1;
         PreviewTranslate.X = 0;
         PreviewTranslate.Y = 0;
-
-        Vm.SetStatus("画面已复位");
-        e.Handled = true;
+        _manipAccumScale = 1.0;
     }
-
     /// <summary>
     /// 退出程序（带二次确认）。
     ///
@@ -1838,30 +1951,38 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>全屏切换：直接使用 AppWindow 的原生呈现器，最稳。</summary>
+    /// <summary>
+    /// 全屏：本应用<b>始终</b>以 AppWindow 原生 FullScreen 呈现器运行。
+    ///
+    /// <para>
+    /// 2026-11-13 按用户要求改：去掉“小窗口 ↔ 全屏”的切换，展台就是一块
+    /// 黑板/展台屏，不该出现可拖拽的标题栏窗口形态。工具栏原来的「全屏」
+    /// 按钮已替换为「退出」。
+    /// </para>
+    /// <para>
+    /// 保留参数是为了兼容旧调用点：传 false 一律忽略（不再退回 Default 呈现器）。
+    /// 退出程序走 ExitApp_Click / Alt+F4。
+    /// </para>
+    /// </summary>
     private void SetFullScreen(bool fullScreen)
     {
-        if (fullScreen == _isFullScreen) return;
+        // 任何“退出全屏”的请求都不执行 —— 本应用没有非全屏形态
+        if (!fullScreen) return;
+        if (_isFullScreen) return;
 
         try
         {
-            AppWindow.SetPresenter(fullScreen
-                ? AppWindowPresenterKind.FullScreen
-                : AppWindowPresenterKind.Default);
+            AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
         }
         catch (Exception ex)
         {
-            AppLog.Write($"[VP] 全屏切换失败：{ex}");
+            AppLog.Write($"[VP] 进入全屏失败：{ex}");
             return;
         }
-
-        _isFullScreen = fullScreen;
-        Vm.IsFullScreen = fullScreen;
-
-        // 注意：这里【不】自动置顶。
-        //   全屏 + 置顶会让用户根本无法切到其他窗口（备课时反而碍事）。
-        //   需要钉在最上层时，点工具栏的「置顶」按钮即可。
-        //   退出全屏：Esc 或 F11，或点工具栏的「全屏」按钮。
+        _isFullScreen = true;
+        Vm.IsFullScreen = true;
+        // 不自动置顶：全屏 + 置顶会让用户无法切到其他窗口（备课反而碍事）。
+        // 需要钉在最上层时点工具栏「置顶」。
     }
 
     /// <summary>Esc / F11 —— 切换全屏。</summary>

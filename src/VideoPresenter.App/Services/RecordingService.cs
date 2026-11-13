@@ -64,6 +64,78 @@ public sealed class RecordingService : IDisposable
     private Thread? _writeThread;
     private long _droppedFrames;
 
+    // ───────────────────── 时间轴（REC-003）─────────────────────
+    //
+    // 用 Stopwatch 的真实经过时间打时间戳，而不是"帧序号 × 帧间隔"。
+    // 原因：队列满会丢帧、相机抖动会漏帧，用帧序号算时间会让视频
+    // 越录越快（录 60 秒的视频在播放器里只有 45 秒，声音/动作全部加速）。
+    private readonly Stopwatch _clock = new();
+    private long _nextSampleTime;      // 100ns 单位
+    private readonly object _clockGate = new();
+    /// <summary>本实例是否持有一次 MFStartup 引用。</summary>
+    private bool _mfHeld;
+
+    // ───────────────────── MF 启动（REC-001）─────────────────────
+    //
+    // MFStartup 必须在使用任何 MF API 之前调用一次（含 SinkWriter / MediaType），
+    // 否则 MFCreateSinkWriterFromURL 直接返回 MF_E_NOT_INITIALIZED，
+    // 表现就是"点录像没有任何反应，日志里一行 0xC00D36B4"。
+    // 这是进程级初始化，用引用计数保证多实例/重入时只调用一次。
+    private static readonly object MfGate = new();
+    private static int MfRefCount;
+    private static bool MfStarted;
+
+    /// <summary>
+    /// 确保 Media Foundation 已初始化。返回 false 表示初始化失败（此时不要继续）。
+    /// </summary>
+    private static bool EnsureMfStarted()
+    {
+        lock (MfGate)
+        {
+            if (MfStarted) { MfRefCount++; return true; }
+
+            try
+            {
+                // Fatal 会抛异常，用返回码形式自己判断
+                int hr = MFStartup(MF_VERSION, 0);
+                if (hr < 0)
+                {
+                    Log($"[VP-REC] MFStartup 失败 0x{hr:X8}");
+                    return false;
+                }
+                MfStarted = true;
+                MfRefCount = 1;
+                Log("[VP-REC] MFStartup 成功");
+                return true;
+            }
+            catch (DllNotFoundException ex)
+            {
+                Log($"[VP-REC] mfplat.dll 不可用：{ex.Message}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log($"[VP-REC] MFStartup 异常：{ex.Message}");
+                return false;
+            }
+        }
+    }
+
+    private static void ReleaseMf()
+    {
+        lock (MfGate)
+        {
+            if (!MfStarted) return;
+            MfRefCount--;
+            if (MfRefCount > 0) return;
+
+            try { MFShutdown(); }
+            catch (Exception ex) { Log($"[VP-REC] MFShutdown 异常：{ex.Message}"); }
+            MfStarted = false;
+            MfRefCount = 0;
+        }
+    }
+
     public bool IsRecording { get; private set; }
     public string? OutputPath { get; private set; }
     public DateTime StartedAt { get; private set; }
@@ -89,6 +161,9 @@ public sealed class RecordingService : IDisposable
         {
             if (IsRecording) return false;
 
+            _clock.Reset();
+            _clock.Start();
+
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
@@ -106,6 +181,19 @@ public sealed class RecordingService : IDisposable
                 _fps = fps;
                 _frameIndex = 0;
                 Interlocked.Exchange(ref _droppedFrames, 0);
+
+                lock (_clockGate)
+                {
+                    _nextSampleTime = 0;
+                }
+
+                // ⓪ MFStartup —— 必须先于任何 MF 调用（REC-001）
+                if (!EnsureMfStarted())
+                {
+                    Log("[VP-REC] 跳过启动：Media Foundation 未初始化");
+                    return false;
+                }
+                _mfHeld = true;
 
                 // ① 创建 SinkWriter（直接写文件）
                 int hr = MFCreateSinkWriterFromURL(outputPath, IntPtr.Zero, null, out _writer);
@@ -198,42 +286,78 @@ public sealed class RecordingService : IDisposable
     }
 
     /// <summary>停止录制并完成文件写入（写入 moov 等索引信息）。</summary>
+    /// <remarks>
+    /// REC-002 修复要点：Finalize 必须在写入线程<b>完全退出之后</b>调用。
+    /// 旧实现虽然 Join 了线程，但 writer 引用是在锁外捕获的，且 Join 超时后
+    /// 仍会 Finalize —— 此时写入线程可能正持有 writer 写帧，
+    /// 结果是 MP4 索引损坏（文件有大小但播不了）或直接 AccessViolation。
+    /// 现在：CompleteAdding → Join（最长 8 秒）→ 确认线程已死 → 才 Finalize。
+    /// 线程没退出干净就放弃 Finalize，宁可文件不全也不要崩进程。
+    /// </remarks>
     public void Stop()
     {
         Thread? thread;
-        IMFSinkWriter? writer;
 
         lock (_gate)
         {
             if (!IsRecording) return;
-
             IsRecording = false;
-
-            _queue?.CompleteAdding();
             thread = _writeThread;
-            writer = _writer;
+            try { _queue?.CompleteAdding(); } catch (ObjectDisposedException) { }
         }
 
-        try { thread?.Join(5000); }
-        catch { /* 超时也继续收尾 */ }
-
-        try
+        // 等写入线程把队列里剩下的帧写完
+        bool threadExited = true;
+        if (thread is not null)
         {
-            // Finalize 会把索引写进文件 —— 没有它 MP4 无法播放
-            writer?.Finalize_();
+            try
+            {
+                threadExited = thread.Join(8000);
+            }
+            catch (Exception ex)
+            {
+                Log($"[VP-REC] 等待写入线程异常：{ex.Message}");
+                threadExited = false;
+            }
         }
-        catch (Exception ex)
+
+        if (!threadExited)
         {
-            Log($"[VP-REC] Finalize 失败：{ex.Message}");
+            Log("[VP-REC] 写入线程未在 8 秒内退出，跳过 Finalize —— 该文件可能无法播放");
+        }
+        else
+        {
+            lock (_gate)
+            {
+                var writer = _writer;
+                if (writer is not null)
+                {
+                    try
+                    {
+                        // Finalize 会把 moov 索引写进文件 —— 没有它 MP4 无法播放
+                        int hr = writer.Finalize_();
+                        if (hr < 0) Log($"[VP-REC] Finalize 返回 0x{hr:X8}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[VP-REC] Finalize 异常：{ex.Message}");
+                    }
+                }
+            }
         }
 
         long dropped = DroppedFrames;
-        Log($"[VP-REC] 录制结束：{OutputPath}（时长 {(DateTime.Now - StartedAt).TotalSeconds:F1}s，丢帧 {dropped}）");
 
         lock (_gate)
         {
+            long frames = _frameIndex;
+            string? path = OutputPath;
+            double elapsed = _clock.Elapsed.TotalSeconds;
+            _clock.Reset();
             Cleanup();
             _writeThread = null;
+            Log($"[VP-REC] 录制结束：{path}（写入 {frames} 帧，丢帧 {dropped}，" +
+                $"实际时长 {elapsed:F1}s）");
         }
     }
 
@@ -242,7 +366,7 @@ public sealed class RecordingService : IDisposable
         var writer = _writer;
         if (writer is null) return;
 
-        long duration = 10_000_000L / Math.Max(_fps, 1);   // 100ns 单位
+        long nominal = 10_000_000L / Math.Max(_fps, 1);   // 100ns 单位，理想帧间隔
 
         try
         {
@@ -276,9 +400,25 @@ public sealed class RecordingService : IDisposable
 
                     sample.AddBuffer(buffer);
 
-                    long time = _frameIndex * duration;
+                    // ── REC-003：按真实经过时间打时间戳 ──
+                    //
+                    // 不能用 _frameIndex * nominal：
+                    //   丢帧时 _frameIndex 只按"成功写入"递增，时间轴会比真实时间
+                    //   短 —— 录 60 秒、丢 15 帧@30fps 的视频，播放器里只有 59.5 秒，
+                    //   整体轻微加速；丢得越多越快。丢帧严重时能快到"看着像快进"。
+                    //
+                    // 正确做法：时间戳 = 该帧入队时的真实时钟，帧间隔取
+                    //   "到下一帧的差值"，最后一帧用标称间隔。
+                    // 这里简化成每次都取当前时钟并保证单调递增（编码器要求），
+                    // 相邻帧为空时不重叠 —— 效果等于把丢帧的时间"如实保留"。
+                    long time = _clock.Elapsed.Ticks;      // Stopwatch 就是 100ns
+                    lock (_clockGate)
+                    {
+                        if (time <= _nextSampleTime) time = _nextSampleTime;
+                        _nextSampleTime = time + 1;
+                    }
                     sample.SetSampleTime(time);
-                    sample.SetSampleDuration(duration);
+                    sample.SetSampleDuration(nominal);
 
                     hr = writer.WriteSample(_streamIndex, sample);
 
@@ -309,7 +449,7 @@ public sealed class RecordingService : IDisposable
             Log($"[VP-REC] 写入线程异常：{ex}");
         }
 
-        Log($"[VP-REC] 写入线程退出，共写入 {_frameIndex} 帧");
+        Log($"[VP-REC] 写入线程退出，共写入 {_frameIndex} 帧，末帧时间戳 {_clock.Elapsed.TotalSeconds:F2}s");
     }
 
     private void Cleanup()
@@ -324,6 +464,13 @@ public sealed class RecordingService : IDisposable
         }
 
         OutputPath = null;
+
+        // 释放 Startup 引用（必须在所有 MF 对象释放之后）
+        if (_mfHeld)
+        {
+            _mfHeld = false;
+            ReleaseMf();
+        }
     }
 
     // ══════════════════════════ 辅助 ══════════════════════════
@@ -376,6 +523,9 @@ public sealed class RecordingService : IDisposable
 
     [DllImport("mfplat.dll", ExactSpelling = true)]
     private static extern int MFStartup(int version, int dwFlags);
+
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    private static extern int MFShutdown();
 
     [DllImport("mfplat.dll", ExactSpelling = true)]
     private static extern int MFCreateMediaType(out IMFMediaType ppMFType);

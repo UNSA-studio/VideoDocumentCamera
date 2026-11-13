@@ -41,10 +41,10 @@
 
         <!--
             键盘快捷键（窗口有焦点时生效）：
-              Esc / F11 —— 切换全屏
+              Esc —— 关设置浮层 / 复位画面缩放
             全局热键（窗口无焦点也生效，注册在 MainWindow.xaml.cs）：
               Ctrl+Alt+P —— 拍照
-              Ctrl+Alt+F —— 切换全屏
+            注：本应用恒定全屏，不再提供"退出全屏"，要离开点工具栏「退出」或 Alt+F4。
         -->
         <!--
             ⚠ 这里【不能】用 KeyboardAccelerator 注册 Escape / F11。
@@ -178,12 +178,12 @@
                         Background="{ThemeResource DividerStrokeColorDefaultBrush}"
                         Margin="4,0"/>
 
-                <Button Command="{x:Bind Vm.ToggleFullScreenCommand}"
+                <Button Click="ExitApp_Click"
                         Background="Transparent"
                         BorderThickness="0"
                         Padding="8"
-                        ToolTipService.ToolTip="全屏（F11）">
-                    <FontIcon Glyph="&#xE740;" FontSize="14"/>
+                        ToolTipService.ToolTip="退出视频展台">
+                    <FontIcon Glyph="&#xE8BB;" FontSize="14"/>
                 </Button>
 
                 <Button Command="{x:Bind Vm.ToggleRightPanelCommand}"
@@ -329,13 +329,13 @@
                         </StackPanel>
                     </Button>
 
-                    <Button Command="{x:Bind Vm.ToggleFullScreenCommand}"
+                    <Button Click="ExitApp_Click"
                             Background="Transparent" BorderThickness="0"
                             Width="64" Height="58" Padding="0" CornerRadius="4"
-                            ToolTipService.ToolTip="全屏（Esc / F11）">
+                            ToolTipService.ToolTip="退出视频展台">
                         <StackPanel Spacing="4">
-                            <FontIcon Glyph="&#xE740;" FontSize="18"/>
-                            <TextBlock Text="全屏" FontSize="11" HorizontalAlignment="Center"/>
+                            <FontIcon Glyph="&#xE8BB;" FontSize="18"/>
+                            <TextBlock Text="退出" FontSize="11" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Button>
 
@@ -353,6 +353,10 @@
 
             <!-- ③-B 中央实时画面 -->
 <Grid x:Name="PreviewContainer" Grid.Row="1" Grid.Column="1" Background="Black"
+              ManipulationMode="Scale,TranslateX,TranslateY"
+              ManipulationStarted="Preview_ManipulationStarted"
+              ManipulationDelta="Preview_ManipulationDelta"
+              ManipulationCompleted="Preview_ManipulationCompleted"
               PointerWheelChanged="Preview_WheelChanged"
               PointerPressed="Preview_PointerPressed"
               PointerMoved="Preview_PointerMoved"
@@ -361,13 +365,14 @@
               DoubleTapped="Preview_DoubleTapped">
                 <!--
                     画面缩放 / 平移（对标希沃的"画面缩放、移动"）。
-
                     变换施加在整个预览容器上（画面 + 批注层一起变换），
                     这样批注的坐标永远与画面保持一致 —— 若只缩放图片，
                     批注会与画面错位。
 
                     交互：
-                      · 滚轮        → 以指针为中心缩放
+                      · 触摸双指捏合 → 以捏合中心缩放（触屏一体机的主要用法）
+                      · 单指拖动    → 平移
+                      · 滚轮        → 以容器中心缩放
                       · 中键 / 右键拖动 → 平移
                       · 双击        → 复位
                 -->
@@ -820,10 +825,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="常规" Style="{StaticResource BodyStrongTextBlockStyle}"/>
 
-                        <ToggleSwitch Header="启动时自动全屏"
-                                      OnContent="开" OffContent="关"
-                                      IsOn="{x:Bind Vm.Settings.StartFullScreen, Mode=TwoWay}"/>
-
+                        <!-- 「启动时自动全屏」已删除：现在恒定全屏，没有可选项 -->
                         <ToggleSwitch Header="自动连接唯一设备"
                                       OnContent="开" OffContent="关"
                                       IsOn="{x:Bind Vm.Settings.AutoConnectSingleDevice, Mode=TwoWay}"/>
@@ -932,7 +934,7 @@
                                       OnContent="启用" OffContent="禁用"
                                       IsOn="{x:Bind Vm.Settings.HotkeyCaptureEnabled, Mode=TwoWay}"/>
 
-                        <ToggleSwitch Header="Ctrl+Alt+F 切换全屏"
+                        <ToggleSwitch Header="Ctrl+Alt+F 复位画面缩放"
                                       OnContent="启用" OffContent="禁用"
                                       IsOn="{x:Bind Vm.Settings.HotkeyFullScreenEnabled, Mode=TwoWay}"/>
                     </StackPanel>
@@ -951,7 +953,8 @@
                     <StackPanel Spacing="4">
                         <TextBlock Text="快捷键" Style="{StaticResource BodyStrongTextBlockStyle}"/>
                         <TextBlock Text="Ctrl+Alt+P　　拍照（全局，窗口无焦点也生效）" FontSize="12"/>
-                        <TextBlock Text="Ctrl+Alt+F / Esc / F11　　切换全屏" FontSize="12"/>
+                        <TextBlock Text="Ctrl+Alt+F　　复位画面缩放（全局）" FontSize="12"/>
+                        <TextBlock Text="滚轮 / 双指捏合　　缩放画面；拖动　　平移；双击 / Esc　　复位" FontSize="12"/>
                     </StackPanel>
 
                     <!-- ⑤ 许可 -->
